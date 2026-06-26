@@ -1,7 +1,6 @@
-import hashlib
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 
 
 @dataclass
@@ -11,18 +10,8 @@ class Article:
     source: str
     published_at: str   # ISO-8601
     raw_text: str
-    content_hash: str = ""
     id: int = 0
     ingested_at: str = ""
-
-    def __post_init__(self):
-        # Auto-compute hash if not provided — callers rarely set this manually
-        if not self.content_hash:
-            self.content_hash = _hash(self.raw_text)
-
-
-def _hash(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def insert_article(conn: sqlite3.Connection, article: Article) -> bool:
@@ -30,11 +19,11 @@ def insert_article(conn: sqlite3.Connection, article: Article) -> bool:
     try:
         conn.execute(
             """
-            INSERT INTO articles (url, title, source, published_at, raw_text, content_hash)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO articles (url, title, source, published_at, raw_text)
+            VALUES (?, ?, ?, ?, ?)
             """,
             (article.url, article.title, article.source,
-             article.published_at, article.raw_text, article.content_hash),
+             article.published_at, article.raw_text),
         )
         conn.commit()
         return True
@@ -43,11 +32,11 @@ def insert_article(conn: sqlite3.Connection, article: Article) -> bool:
         return False
 
 
-def article_exists(conn: sqlite3.Connection, url: str, content_hash: str) -> bool:
-    """Check by EITHER url or hash — catches reposts and URL redirects."""
+def article_exists(conn: sqlite3.Connection, url: str) -> bool:
+    """Check if article already stored by URL."""
     row = conn.execute(
-        "SELECT 1 FROM articles WHERE url = ? OR content_hash = ? LIMIT 1",
-        (url, content_hash),
+        "SELECT 1 FROM articles WHERE url = ? LIMIT 1",
+        (url,),
     ).fetchone()
     return row is not None
 

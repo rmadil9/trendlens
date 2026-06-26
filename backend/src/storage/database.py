@@ -26,7 +26,6 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             source        TEXT,                       -- feed name, e.g. "TechCrunch"
             published_at  TEXT,                       -- ISO-8601 string; TEXT because SQLite has no native datetime
             raw_text      TEXT,                       -- cleaned article body
-            content_hash  TEXT    NOT NULL UNIQUE,   -- dedup anchor #2 (SHA-256 of raw_text)
             ingested_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
         )
     """)
