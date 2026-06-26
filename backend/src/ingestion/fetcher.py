@@ -25,7 +25,11 @@ def poll_feed(feed: Feed, max_articles: int = 20) -> list[Article]:
         logger.warning("Malformed feed %s: %s", feed.name, parsed.bozo_exception)
 
     articles = []
+    first = True
     for entry in parsed.entries[:max_articles]:
+        if first:
+            logger.debug("Sample entry from %s:\n%s", feed.name, dict(entry))
+            first = False
         article = _process_entry(entry, feed.name)
         if article:
             articles.append(article)
