@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup
 
 
 def html_to_text(html: str) -> str:
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(html, "html.parser")
 
     # Remove tags that are never article content
     for tag in soup(["script", "style", "nav", "header", "footer",
