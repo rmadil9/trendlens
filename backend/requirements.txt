@@ -9,6 +9,9 @@ httpx==0.27.0          # async HTTP client for article fetching
 # HTML → text
 beautifulsoup4==4.12.3
 
+# Text splitting
+langchain-text-splitters==0.3.8
+
 # Vector store client
 qdrant-client==1.9.1
 
