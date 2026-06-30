@@ -79,6 +79,107 @@ If you call `OpenAI()` at import time (top of the file), Python runs it the mome
 
 ---
 
+## Day 3: Retrieval + Generation (The RAG Brain)
+
+### The 5-Step RAG Flow
+
+```
+User question
+    ↓ 1. Embed the question (same model, same vector space as ingestion)
+    ↓ 2. Query Qdrant: find K most similar chunks within the time filter
+    ↓ 3. Build prompt: system instruction + tagged chunks + question + guardrail
+    ↓ 4. Call GPT-4o-mini → generates a cited answer
+    ↓ 5. Append sources list assembled from chunk metadata → return to user
+```
+
+### Time-Weighted Retrieval
+
+- The time filter runs **inside Qdrant**, not after in Python. Qdrant narrows the search space first, then runs similarity inside it.
+- Why not post-filter in Python? If you fetch top-50 and then discard old ones, you might end up with 0 results. Pre-filtering guarantees you always get K results from the correct time window.
+- "this week" / "this month" are parsed from the question text → converted to a Unix timestamp cutoff → passed as `Range(gte=cutoff)` on `published_at`.
+- If no chunks exist in the window, the retriever returns `[]` and the generator says "I don't know" — honest, not broken.
+
+### Timestamps: int vs string vs Unix
+
+Three ways to represent the same moment in time:
+```
+Human string  →  "2026-06-21T00:00:00Z"
+Unix int      →  1750464000
+datetime obj  →  datetime(2026, 6, 21, 0, 0, 0, tzinfo=utc)
+```
+Unix timestamp = seconds elapsed since Jan 1, 1970. It's just a big integer. We use it because Qdrant's `Range` filter does numeric comparison — strings can't be reliably compared as dates.
+
+Subtracting "7 days" works like:
+```
+now (Unix int)     =  1751328000
+7 days in seconds  =    604800   (7 × 24 × 60 × 60)
+cutoff             =  1750723200
+```
+
+### Vectors Are Never Converted Back
+
+The vector is a one-way transformation — like a fingerprint. You cannot reverse a fingerprint back into the person. What goes to the LLM is the **payload** (the original text stored alongside the vector), not the vector itself. The vector's only job is finding the right chunks. Once found, it's discarded.
+
+### Prompt Engineering
+
+A RAG prompt has four sections in a specific order:
+1. **System instruction** — sets role + establishes that hallucination is forbidden
+2. **Retrieved chunks** — each tagged `[Article N | Source | Date | URL]` so the model can cite them
+3. **User question**
+4. **Guardrail** — placed last because models weight recent tokens more heavily; "cite your sources, say I don't know if context doesn't answer it"
+
+Why split into `system` and `user` roles instead of one string? The chat API treats `system` as authoritative instruction. Putting the guardrail in `user` role weakens it — the model can treat it as just more user text.
+
+### Citation Assembly
+
+Citations are built from the **retrieved chunks**, not by parsing the model's output. Parsing is fragile — the model might paraphrase a source name or drop one. The chunks are ground truth: if a chunk was retrieved, its source is real. The model uses inline `[Source, Date]` tags; the assembled sources list at the bottom provides the full URL.
+
+### Retrieval Quality Signal
+
+`top score` in the retrieval log = cosine similarity of the best match. Use it to sanity-check retrieval:
+- `0.7+` → strong match, answer will be grounded
+- `0.5–0.7` → moderate, answer is probably relevant
+- `< 0.4` → weak match, retrieved chunks may not be relevant regardless of prompt quality
+
+Day 3 run: top score `0.523` for "what's new in AI this week?" — moderate, acceptable for a 7-day window.
+
+---
+
+## Day 3: Critical Questions I Asked
+
+**Q: What if after Qdrant filtering there are 0 chunks?**
+Qdrant returns an empty list — no crash. The retriever returns `[]`, the generator returns "I don't know." This is the correct behavior. Post-filtering would silently return stale articles as if they were recent, which is worse.
+
+**Q: What is the payload for? Why not just store vectors?**
+The vector finds *which* chunks are relevant. The payload carries *what* to do with them — the actual text, title, URL, date. Without payload, retrieval returns "point #abc123 is relevant" and you have nothing to put in the prompt or show the user.
+
+**Q: Do vectors get converted back to text before going to the LLM?**
+No. Vectors are a one-way transformation. What goes to the LLM is `payload["text"]` — the original words stored alongside the vector during ingestion. The vector is discarded once retrieval is done.
+
+**Q: Why does `python src/ingestion/pipeline.py` fail with ModuleNotFoundError?**
+Running a file directly adds its own folder (`src/ingestion/`) to `sys.path`. Running with `-m` adds the current directory (`backend/`) to `sys.path`. The `from src.storage...` imports need `backend/` on the path, not `src/ingestion/`. Always use `python -m src.module.path` with dots, not slashes.
+
+---
+
+## Day 3: Terminology
+
+| Term | Plain meaning |
+|---|---|
+| **RAG** | Retrieval-Augmented Generation. Fetch relevant context first, then generate an answer grounded in that context. |
+| **Pre-filtering** | Applying a filter inside the database before similarity search runs. Guarantees K results from the filtered space. |
+| **Post-filtering** | Fetching results first, then discarding ones that don't match. Can silently produce 0 results. |
+| **Time window** | The date range used to restrict retrieval. Parsed from the question ("this week" → 7 days). |
+| **Unix cutoff** | A Unix timestamp representing the oldest allowed `published_at`. Chunks older than this are excluded. |
+| **Query vector** | The embedding of the user's question. Must use the same model as ingestion or similarity scores are meaningless. |
+| **Cosine score** | Similarity between query vector and a chunk vector. Ranges 0–1. Higher = more relevant. |
+| **System prompt** | The authoritative instruction role in a chat API call. Sets behavior the model treats as non-negotiable. |
+| **Guardrail** | An explicit instruction in the prompt that constrains model behavior (e.g. "say I don't know if unsure"). |
+| **Citation assembly** | Building the sources list from retrieved chunk metadata, not by parsing the model's output. |
+| **Parametric knowledge** | Facts the model learned during training. In RAG, we suppress this — answers must come from retrieved context only. |
+| **Temperature** | Controls randomness in generation. `0.2` = faithful and consistent. `1.0` = creative and varied. |
+
+---
+
 ## Day 2: Terminology
 
 | Term | Plain meaning |
