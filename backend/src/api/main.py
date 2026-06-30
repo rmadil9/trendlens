@@ -1,8 +1,11 @@
 import logging
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+load_dotenv()  # must run before any module reads OPENAI_API_KEY from the environment
 
 from src.api.routes import health, query
 from src.storage.vector_store import ensure_collection, get_client
@@ -37,7 +40,7 @@ app = FastAPI(
 # Without this, the browser blocks the request before it even leaves the tab.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # only the React dev server — not a wildcard
+    allow_origins=["http://localhost:5173"],  # Vite dev server (default port)
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
