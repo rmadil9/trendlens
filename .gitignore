@@ -15,10 +15,31 @@ dist/
 backend/data/
 *.db
 
-# Node
+# Frontend (Node / Vite)
 frontend/node_modules/
 frontend/dist/
+frontend/dist-ssr/
 frontend/.env
+frontend/*.local
+
+# Frontend logs
+frontend/logs/
+frontend/*.log
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+frontend/lerna-debug.log*
+
+# Frontend editor & OS artifacts
+frontend/.vscode/*
+!frontend/.vscode/extensions.json
+frontend/.idea/
+frontend/*.suo
+frontend/*.ntvs*
+frontend/*.njsproj
+frontend/*.sln
+frontend/*.sw?
 
 # IDE
 .vscode/

@@ -11,7 +11,7 @@ load_dotenv(dotenv_path=".env")  # must run before any module reads OPENAI_API_K
 
 from src.storage.vector_store import get_client, ensure_collection
 from src.retrieval.retriever import retrieve
-from src.generation.generator import generate_answer
+from src.generation.generator import generate_answer, _assemble_sources
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s — %(message)s")
 
@@ -38,6 +38,8 @@ def main() -> None:
 
     answer = generate_answer(question, chunks)
     print(answer)
+    print()
+    print(_assemble_sources(chunks))
 
 
 if __name__ == "__main__":

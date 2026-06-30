@@ -49,7 +49,6 @@ def generate_answer(question: str, chunks: list[dict]) -> str:
     )
 
     answer = response.choices[0].message.content.strip()
-    sources_block = _assemble_sources(chunks)
 
     logger.info(
         "Generated answer (%d tokens used — prompt: %d, completion: %d)",
@@ -58,7 +57,7 @@ def generate_answer(question: str, chunks: list[dict]) -> str:
         response.usage.completion_tokens,
     )
 
-    return f"{answer}\n\n{sources_block}"
+    return answer
 
 
 def _assemble_sources(chunks: list[dict]) -> str:
