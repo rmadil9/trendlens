@@ -1,5 +1,8 @@
 """
-Day 1 demo script — run this to verify the ingestion pipeline works end-to-end.
+Ingest cron (Cron 1): polls RSS feeds and writes new articles to SQLite only.
+New rows default to is_embedded=0, so src.ingestion.pipeline (Cron 2) picks
+them up on its next run — this script never touches Qdrant.
+
 Run it twice: second run should show 0 inserted (all duplicates skipped).
 
 Usage (from backend/):
