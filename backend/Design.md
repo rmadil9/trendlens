@@ -27,8 +27,20 @@
 - Data sources (tiered: RSS → newsletters → skip)
 - Ingestion pipeline (6-step flow)
 - Chunking approach (recursive, 500 tokens, 50 overlap)
-- Metadata schema
-- Dual storage architecture (Qdrant + SQLite)
+- Metadata schema — SQLite `articles` table (see `src/storage/schema.py`):
+  - `id` (PK, autoincrement)
+  - `url` (`NOT NULL UNIQUE` — sole dedup anchor; no content-hash column)
+  - `title`, `source`, `published_at` (ISO-8601 string), `raw_text`
+  - `ingested_at` (defaults to insert time)
+  - Indexes on `published_at` and `source` for retrieval-time filtering
+  - Note: an earlier design used a `content_hash` (SHA-256) column as a
+    second dedup anchor alongside `url`. It was removed — URL uniqueness
+    alone was sufficient and the extra hash added no dedup value in
+    practice.
+- Dual storage architecture (Qdrant + SQLite): Qdrant holds chunk
+  embeddings + payload for vector search; SQLite holds article-level
+  metadata and is the source of truth for dedup (by `url`) and
+  time-range filtering
 - Data quality risks and mitigations
 - Retention policy (keep everything)
 
@@ -68,6 +80,9 @@
 - Project structure rationale
 - Configuration strategy
 - Abstraction decisions with reasoning
+  (`src/storage/schema.py` holds DDL only, separate from
+  `database.py`'s connection management — keeps schema changes and
+  connection lifecycle independently testable/reviewable)
 - Logging approach
 - Testing strategy
 - Dependency management

@@ -28,7 +28,7 @@ def insert_article(conn: sqlite3.Connection, article: Article) -> bool:
         conn.commit()
         return True
     except sqlite3.IntegrityError:
-        # UNIQUE constraint on url or content_hash fired — this is expected for dupes
+        # UNIQUE constraint on url fired — this is expected for dupes
         return False
 
 
