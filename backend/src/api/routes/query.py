@@ -8,6 +8,7 @@ from src.api.models.request import QueryRequest
 from src.api.models.response import QueryResponse, Source
 from src.generation.generator import generate_answer
 from src.retrieval.retriever import retrieve
+from src.retrieval.sources import dedupe_sources
 
 logger = logging.getLogger(__name__)
 
@@ -31,22 +32,7 @@ def query(body: QueryRequest, qdrant: QdrantClient = Depends(get_qdrant)) -> Que
 
 
 def _build_sources(chunks: list[dict]) -> list[Source]:
-    # Deduplicate by URL — the same article can produce multiple chunks,
-    # but we only want one citation per article in the source list.
-    seen: set[str] = set()
-    sources: list[Source] = []
-
-    for chunk in chunks:
-        if chunk["url"] in seen:
-            continue
-        seen.add(chunk["url"])
-        sources.append(
-            Source(
-                title=chunk["title"],
-                url=chunk["url"],
-                source=chunk["source"],
-                published_at=chunk["published_at"],
-            )
-        )
-
-    return sources
+    # dedupe_sources is the single source of truth for "what counts as a
+    # source" (dedup by URL) — the CLI's printed source list is built from
+    # the same function, so the two can never disagree.
+    return [Source(**s) for s in dedupe_sources(chunks)]

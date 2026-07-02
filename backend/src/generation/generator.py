@@ -11,6 +11,7 @@ from openai import (
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from src.generation.prompt import build_prompt
+from src.retrieval.sources import dedupe_sources
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,10 @@ def generate_answer(question: str, chunks: list[dict]) -> str:
 
 def _assemble_sources(chunks: list[dict]) -> str:
     """
-    Build a deduplicated sources list from the retrieved chunks.
+    Render the canonical source list (see dedupe_sources) as printable text
+    for the CLI. The API renders the same list as JSON Source objects
+    instead (src/api/routes/query.py) — both read from dedupe_sources so
+    they can't disagree on which articles were cited.
 
     Why build from chunks and not from the model's output?
     Parsing the model's cited sources is fragile — it might paraphrase
@@ -94,16 +98,10 @@ def _assemble_sources(chunks: list[dict]) -> str:
     was retrieved, its source is real. We list all retrieved sources and
     let the model's inline citations connect claims to them.
     """
-    seen_urls = set()
     lines = ["**Sources:**"]
 
-    for i, chunk in enumerate(chunks, start=1):
-        url = chunk["url"]
-        if url in seen_urls:
-            continue
-        seen_urls.add(url)
-
-        date_str = datetime.fromtimestamp(chunk["published_at"], tz=timezone.utc).strftime("%Y-%m-%d")
-        lines.append(f"[{i}] {chunk['source']} — {chunk['title']} ({date_str})\n    {url}")
+    for i, s in enumerate(dedupe_sources(chunks), start=1):
+        date_str = datetime.fromtimestamp(s["published_at"], tz=timezone.utc).strftime("%Y-%m-%d")
+        lines.append(f"[{i}] {s['source']} — {s['title']} ({date_str})\n    {s['url']}")
 
     return "\n".join(lines)
