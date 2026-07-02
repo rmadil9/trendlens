@@ -35,7 +35,7 @@ def parse_time_window(question: str) -> int:
         days = 7
     elif "this month" in q or "past month" in q or "last month" in q:
         days = 30
-    elif "today" in q:
+    elif "today" in q or "recent" in q:
         days = 1
     else:
         days = DEFAULT_WINDOW_DAYS
