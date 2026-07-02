@@ -1,16 +1,17 @@
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, Range
 
-from src.ingestion.embedder import _get_client as _get_openai, MODEL
+from src.ingestion.embedder import embed_text
 from src.storage.vector_store import COLLECTION
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WINDOW_DAYS = 30
-K = 5
+DEFAULT_WINDOW_DAYS = int(os.getenv("DEFAULT_WINDOW_DAYS", "30"))
+K = int(os.getenv("RETRIEVAL_K", "5"))
 
 
 def parse_time_window(question: str) -> int:
@@ -60,9 +61,7 @@ def retrieve(question: str, client: QdrantClient, k: int = K) -> list[dict]:
 
     # Embed the question — must use the same model used during ingestion
     # so the question vector lives in the same 1536-dimensional space
-    openai = _get_openai()
-    response = openai.embeddings.create(model=MODEL, input=[question])
-    query_vector = response.data[0].embedding
+    query_vector = embed_text(question)
 
     # The filter narrows the search space BEFORE similarity is computed
     time_filter = Filter(

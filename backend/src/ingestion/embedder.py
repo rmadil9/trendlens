@@ -19,6 +19,12 @@ def _get_client() -> OpenAI:
     return _client
 
 
+def embed_text(text: str) -> list[float]:
+    """Embed a single string (e.g. a user question) — the public entry point
+    for callers outside ingestion/ that need one-off embeddings."""
+    return _embed_texts([text])[0]
+
+
 def embed_chunks(chunks: list[dict]) -> list[dict]:
     """
     Add an 'embedding' key (list[float], len=1536) to each chunk dict.

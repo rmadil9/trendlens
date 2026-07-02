@@ -1,5 +1,14 @@
 import logging
-from openai import OpenAI
+from datetime import datetime, timezone
+
+from openai import (
+    OpenAI,
+    APIConnectionError,
+    APITimeoutError,
+    InternalServerError,
+    RateLimitError,
+)
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from src.generation.prompt import build_prompt
 
@@ -8,6 +17,11 @@ logger = logging.getLogger(__name__)
 MODEL = "gpt-4o-mini"
 TEMPERATURE = 0.2   # low = more faithful to context, less creative invention
 MAX_TOKENS = 1024
+
+# Retry only on transient failures (rate limits, timeouts, connection drops,
+# 5xx) — never on 4xx like bad requests or auth errors, which won't succeed
+# on retry.
+_RETRYABLE = (RateLimitError, APITimeoutError, APIConnectionError, InternalServerError)
 
 
 _client: OpenAI | None = None
@@ -18,6 +32,24 @@ def _get_client() -> OpenAI:
     if _client is None:
         _client = OpenAI()
     return _client
+
+
+@retry(
+    retry=retry_if_exception_type(_RETRYABLE),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    reraise=True,
+)
+def _call_chat_completion(client: OpenAI, system_prompt: str, user_prompt: str):
+    return client.chat.completions.create(
+        model=MODEL,
+        temperature=TEMPERATURE,
+        max_tokens=MAX_TOKENS,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt},
+        ],
+    )
 
 
 def generate_answer(question: str, chunks: list[dict]) -> str:
@@ -38,15 +70,7 @@ def generate_answer(question: str, chunks: list[dict]) -> str:
     system_prompt, user_prompt = build_prompt(chunks, question)
 
     client = _get_client()
-    response = client.chat.completions.create(
-        model=MODEL,
-        temperature=TEMPERATURE,
-        max_tokens=MAX_TOKENS,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": user_prompt},
-        ],
-    )
+    response = _call_chat_completion(client, system_prompt, user_prompt)
 
     answer = response.choices[0].message.content.strip()
 
@@ -79,7 +103,6 @@ def _assemble_sources(chunks: list[dict]) -> str:
             continue
         seen_urls.add(url)
 
-        from datetime import datetime, timezone
         date_str = datetime.fromtimestamp(chunk["published_at"], tz=timezone.utc).strftime("%Y-%m-%d")
         lines.append(f"[{i}] {chunk['source']} — {chunk['title']} ({date_str})\n    {url}")
 

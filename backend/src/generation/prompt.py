@@ -19,7 +19,7 @@ def build_prompt(chunks: list[dict], question: str) -> tuple[str, str]:
         "Your job is to answer questions using ONLY the news articles provided below. "
         "Do not use any knowledge from your training data. "
         "If the provided articles do not contain enough information to answer the question, "
-        "say exactly: \"I don't know based on the available articles.\""
+        "say exactly: \"Sorry, I could not find relevant information in the latest news articles to answer your question.\""
     )
 
     context_block = _format_chunks(chunks)
@@ -30,11 +30,13 @@ def build_prompt(chunks: list[dict], question: str) -> tuple[str, str]:
         f"---\n\n"
         f"Question: {question}\n\n"
         f"Instructions:\n"
-        f"- Answer using only the articles above.\n"
+        f"- Answer using only the articles chunks above.\n"
         f"- After each claim, cite the source like this: [TechCrunch, 2026-06-25]\n"
         f"- If multiple articles support a claim, cite all of them.\n"
-        f"- If the articles don't answer the question, say \"I don't know based on the available articles.\"\n"
+        f"- If the articles don't answer the question, say \"Sorry, I could not find relevant information in the latest news articles to answer your question.\"\n"
         f"- Do not invent facts, URLs, or quotes not present in the articles above."
+        f"- Answer in bullets poins not more than 3-5 or answer in short paragraphs if needed with 3-5 lines in each paragraph and maximum number of paragrah should not be more than 2"
+        f"- Bold the important terms or entities in the answer for sake of highlighting"
     )
 
     return system_prompt, user_prompt
