@@ -5,10 +5,13 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from src.storage.article_store import Article
 
 # ~500 words ≈ ~650 tokens for news prose; overlap keeps boundary sentences coherent
+CHUNK_SIZE_WORDS = 500
+CHUNK_OVERLAP_WORDS = 50
+
 _splitter = RecursiveCharacterTextSplitter(
-    chunk_size=500,          # measured in characters by default — we override below
-    chunk_overlap=50,
-    length_function=lambda text: len(text.split()),   # count words, not chars
+    chunk_size=CHUNK_SIZE_WORDS,
+    chunk_overlap=CHUNK_OVERLAP_WORDS,
+    length_function=lambda text: len(text.split()),   # count words, not chars — see constant names above
     separators=["\n\n", "\n", ". ", " ", ""],         # paragraph → line → sentence → word → char
 )
 

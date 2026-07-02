@@ -1,4 +1,5 @@
 import logging
+import os
 import uuid
 
 from qdrant_client import QdrantClient
@@ -8,12 +9,15 @@ from src.ingestion.embedder import DIMENSIONS
 
 logger = logging.getLogger(__name__)
 
-COLLECTION = "trendlens"
+COLLECTION = os.getenv("QDRANT_COLLECTION", "trendlens")
 
 _client: QdrantClient | None = None
 
 
-def get_client(host: str = "localhost", port: int = 6333) -> QdrantClient:
+def get_client(
+    host: str = os.getenv("QDRANT_HOST", "localhost"),
+    port: int = int(os.getenv("QDRANT_PORT", "6333")),
+) -> QdrantClient:
     global _client
     if _client is None:
         _client = QdrantClient(host=host, port=port)
