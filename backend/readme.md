@@ -85,15 +85,21 @@ quality). Results:
 
 | Metric | Score |
 |---|---|
-| Retrieval Precision@5 | --% |
-| Time-filter Accuracy | --% |
-| Answer Faithfulness | --% |
-| Citation Accuracy | --% |
+| Retrieval Precision@5 (excl. edge cases) | 82% |
+| Retrieval Precision@5 (all 15) | 68% |
+| Time-filter Accuracy | 80% (12/15) |
+| Answer Faithfulness | 87% (13/15) |
+| Citation Accuracy | ~87% |
 
-<!-- Fill after running eval -->
+3 of the 15 queries are deliberately adversarial (off-topic / a known
+time-parsing gap) and are *expected* to score low — see
+[Design.md](Design.md#6-evaluation) for the breakdown and the one bug
+found and fixed during this eval pass (a prompt-instruction gap that made
+the refusal guardrail fire even after the model had already answered part
+of a multi-part question).
 
-See [eval/test_queries.md](backend/eval/test_queries.md) for the
-full test set and [eval/results/](backend/eval/results/) for
+See [eval/test_queries.md](eval/test_queries.md) for the
+full test set and [eval/results/](eval/results/) for
 detailed scoring.
 
 ## Tech Stack
@@ -132,12 +138,4 @@ tradeoff, and deliberate omission — is documented in
 ## License
 
 MIT
-
-
-
-
-
-
-
-
 
