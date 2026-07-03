@@ -18,8 +18,12 @@ def build_prompt(chunks: list[dict], question: str) -> tuple[str, str]:
         "You are a news analyst assistant for TrendLens. "
         "Your job is to answer questions using ONLY the news articles provided below. "
         "Do not use any knowledge from your training data. "
-        "If the provided articles do not contain enough information to answer the question, "
-        "say exactly: \"Sorry, I could not find relevant information in the latest news articles to answer your question.\""
+        "If the question has multiple parts and the articles only support some of them, "
+        "answer the parts you can support and simply omit the rest — do not add a refusal "
+        "statement just because one part of the question goes unanswered. "
+        "Only if NONE of the provided articles are relevant to the question, say exactly: "
+        "\"Sorry, I could not find relevant information in the latest news articles to answer "
+        "your question.\" and say nothing else."
     )
 
     context_block = _format_chunks(chunks)
@@ -33,7 +37,8 @@ def build_prompt(chunks: list[dict], question: str) -> tuple[str, str]:
         f"- Answer using only the articles chunks above.\n"
         f"- After each claim, cite the source like this: [TechCrunch, 2026-06-25]\n"
         f"- If multiple articles support a claim, cite all of them.\n"
-        f"- If the articles don't answer the question, say \"Sorry, I could not find relevant information in the latest news articles to answer your question.\"\n"
+        f"- If NONE of the articles are relevant, say \"Sorry, I could not find relevant information in the latest news articles to answer your question.\" and nothing else. "
+        f"If only SOME parts of the question are supported, answer those parts and leave out the rest — do not add the refusal sentence in that case.\n"
         f"- Do not invent facts, URLs, or quotes not present in the articles above."
         f"- Answer in bullets poins not more than 3-5 or answer in short paragraphs if needed with 3-5 lines in each paragraph and maximum number of paragrah should not be more than 2"
         f"- Bold the important terms or entities in the answer for sake of highlighting"
@@ -56,13 +61,13 @@ def _format_chunks(chunks: list[dict]) -> str:
     """
     blocks = []
     for i, chunk in enumerate(chunks, start=1):
-        date_str = _unix_to_date(chunk["published_at"])
+        date_str = unix_to_date(chunk["published_at"])
         header = f"[Article {i} | Source: {chunk['source']} | Date: {date_str} | URL: {chunk['url']}]"
         blocks.append(f"{header}\n{chunk['text']}")
 
     return "\n\n".join(blocks)
 
 
-def _unix_to_date(ts: int) -> str:
+def unix_to_date(ts: int) -> str:
     """Convert Unix timestamp → human-readable date string for the prompt."""
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
