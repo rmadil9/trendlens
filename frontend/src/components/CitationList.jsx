@@ -2,7 +2,7 @@ export default function CitationList({ sources }) {
   if (!sources.length) return null;
 
   return (
-    <div className="citation-list">
+    <div className="citation-list citation-list-in">
       <h2 className="panel-label">Sources</h2>
       <ol className="citations">
         {sources.map((s, i) => (

@@ -21,7 +21,7 @@ def query(body: QueryRequest, qdrant: QdrantClient = Depends(get_qdrant)) -> Que
     # here as `qdrant`. This is dependency injection — the endpoint never calls get_client()
     # itself, so it stays testable (tests can inject a fake client via Depends override).
     try:
-        chunks = retrieve(body.question, qdrant)
+        chunks = retrieve(body.question, qdrant, time_window=body.time_window)
         answer = generate_answer(body.question, chunks)
         sources = _build_sources(chunks)
         return QueryResponse(answer=answer, sources=sources)

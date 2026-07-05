@@ -3,11 +3,11 @@ const BASE_URL = "http://localhost:8000";
 // All API calls live here — components call these functions, never fetch() directly.
 // This means if the base URL changes (e.g. prod), you change it in one place.
 
-export async function postQuery(question) {
+export async function postQuery(question, timeWindow = "today") {
   const response = await fetch(`${BASE_URL}/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, time_window: timeWindow }),
   });
 
   // response.ok is true for 2xx status codes.

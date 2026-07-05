@@ -1,4 +1,8 @@
-export default function AnswerPanel({ answer, loading }) {
+import { formatAnswer } from "../utils/formatAnswer";
+
+const WINDOW_LABELS = { today: "Today", week: "This week", month: "This month" };
+
+export default function AnswerPanel({ answer, loading, timeWindow }) {
   if (loading) {
     return (
       <div className="answer-panel" aria-live="polite" aria-busy="true">
@@ -16,10 +20,14 @@ export default function AnswerPanel({ answer, loading }) {
 
   return (
     // aria-live="polite" tells screen readers to announce when the answer updates
-    <div className="answer-panel" aria-live="polite">
-      <h2 className="panel-label">Answer</h2>
-      {/* white-space: pre-wrap in CSS preserves newlines in the GPT response */}
-      <p className="answer-text">{answer}</p>
+    <div className="answer-panel answer-panel-in" aria-live="polite">
+      <div className="answer-header">
+        <h2 className="panel-label">Answer</h2>
+        {timeWindow && (
+          <span className="window-tag">{WINDOW_LABELS[timeWindow] ?? timeWindow}</span>
+        )}
+      </div>
+      <div className="answer-text">{formatAnswer(answer)}</div>
     </div>
   );
 }

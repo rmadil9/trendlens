@@ -10,45 +10,32 @@ from src.storage.vector_store import COLLECTION
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WINDOW_DAYS = int(os.getenv("DEFAULT_WINDOW_DAYS", "30"))
 K = int(os.getenv("RETRIEVAL_K", "5"))
 
+# Explicit day counts for each UI time-window chip. Replaces the old
+# keyword-sniffing of the question text (parse_time_window) now that the
+# frontend sends the window directly — keeping both would let a stray
+# "this week" inside the question text silently override the chip the
+# user actually selected.
+WINDOW_DAYS = {
+    "today": 1,
+    "week": 7,
+    "month": 30,
+}
 
-def parse_time_window(question: str) -> int:
-    """
-    Scan the question for time keywords and return a Unix timestamp cutoff.
-    Anything published before this timestamp is excluded from search.
 
-    'this week'  → 7 days ago
-    'this month' → 30 days ago
-    default      → DEFAULT_WINDOW_DAYS ago
-
-    Why keywords-in-question and not a separate argument?
-    Because the user types 'what's new in AI this week?' and we want that
-    to work without forcing them to pass --window=7 separately.
-    Tradeoff: brittle for unusual phrasing, but good enough for a demo.
-    """
-    q = question.lower()
+def _cutoff_timestamp(time_window: str) -> int:
+    days = WINDOW_DAYS.get(time_window, WINDOW_DAYS["today"])
     now = datetime.now(tz=timezone.utc)
-
-    if "this week" in q or "past week" in q or "last week" in q:
-        days = 7
-    elif "this month" in q or "past month" in q or "last month" in q:
-        days = 30
-    elif "today" in q or "recent" in q:
-        days = 1
-    else:
-        days = DEFAULT_WINDOW_DAYS
-
     cutoff = now - timedelta(days=days)
-    logger.info("Time window: last %d days (cutoff: %s)", days, cutoff.isoformat())
+    logger.info("Time window: %s (last %d days, cutoff: %s)", time_window, days, cutoff.isoformat())
     return int(cutoff.timestamp())
 
 
-def retrieve(question: str, client: QdrantClient, k: int = K) -> list[dict]:
+def retrieve(question: str, client: QdrantClient, time_window: str = "today", k: int = K) -> list[dict]:
     """
     Embed the question, then search Qdrant for the K most relevant chunks
-    that were published within the time window parsed from the question.
+    that were published within the given time window.
 
     The filter runs INSIDE Qdrant (not post-filtering in Python).
     This guarantees we always get up to K results from the correct window —
@@ -57,7 +44,7 @@ def retrieve(question: str, client: QdrantClient, k: int = K) -> list[dict]:
     Returns a list of chunk dicts (text, title, url, source, published_at, score).
     Returns [] if no chunks exist in the time window — caller handles this.
     """
-    cutoff = parse_time_window(question)
+    cutoff = _cutoff_timestamp(time_window)
 
     # Embed the question — must use the same model used during ingestion
     # so the question vector lives in the same 1536-dimensional space
@@ -82,7 +69,7 @@ def retrieve(question: str, client: QdrantClient, k: int = K) -> list[dict]:
     )
 
     if not results:
-        logger.warning("No chunks found in the last %d-day window for: %r", DEFAULT_WINDOW_DAYS, question)
+        logger.warning("No chunks found in window=%s for: %r", time_window, question)
         return []
 
     chunks = []

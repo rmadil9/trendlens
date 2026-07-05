@@ -4,8 +4,6 @@ A time-weighted RAG system that ingests tech news from multiple sources
 and lets you ask questions like *"What's new in AI this week?"* — getting
 synthesized, source-cited answers grounded in recent articles.
 
-![Demo](docs/demo.gif)   <!-- Add after MVP -->
-
 ## Why This Exists
 
 Keeping up with tech news is overwhelming. Google gives you individual
@@ -32,9 +30,7 @@ not just similar content.
 
 ## Architecture
 
-![Architecture Diagram](docs/architecture-diagram.png)
-
-See [DESIGN.md](docs/DESIGN.md) for detailed design decisions,
+See [Design.md](Design.md) for detailed design decisions,
 tradeoffs, and engineering reasoning.
 
 ## Quick Start
@@ -45,7 +41,7 @@ tradeoffs, and engineering reasoning.
 
 ### Run locally
 ```bash
-git clone https://github.com/yourusername/trendlens.git
+git clone https://github.com/rmadil9/trendlens.git
 cd trendlens
 cp .env.example .env
 # Add your OPENAI_API_KEY to .env
@@ -68,14 +64,12 @@ npm run dev
 Open http://localhost:3000 and ask a question.
 
 ### Run with Docker (production-like)
+> **Not wired up yet.** `docker-compose.yml` currently only defines the
+> Qdrant service — there's no backend/frontend Dockerfile and no
+> `production` profile. This command is aspirational until that's built.
 ```bash
 docker compose --profile production up --build
 ```
-
-## Live Demo
-
-🔗 [trendlens.yourdomain.com](https://trendlens.yourdomain.com)
-<!-- Add after deployment -->
 
 ## Evaluation
 
@@ -117,23 +111,25 @@ detailed scoring.
 ## Project Status
 
 - [x] Project planning and design
-- [ ] Ingestion pipeline (RSS → clean text → chunks)
-- [ ] Embedding + Qdrant storage
-- [ ] Retrieval with time-weighting
-- [ ] Generation with citations
-- [ ] API endpoints
-- [ ] Web UI
-- [ ] Evaluation
-- [ ] Event-driven ingestion (RabbitMQ)
+- [x] Ingestion pipeline (RSS → clean text → chunks)
+- [x] Embedding + Qdrant storage
+- [x] Retrieval with time-weighting
+- [x] Generation with citations
+- [x] API endpoints
+- [x] Web UI
+- [x] Evaluation (hand-scored, 15 queries — see above)
+- [ ] Event-driven ingestion (RabbitMQ) — still cron-based
 - [ ] Scheduled digests
 - [ ] UI polish
 - [ ] CI/CD (GitHub Actions)
+- [ ] Production Docker build (only Qdrant is containerized today)
+- [ ] Demo GIF / architecture diagram
 
 ## Design Document
 
 The full engineering thinking behind this project — every decision,
 tradeoff, and deliberate omission — is documented in
-[docs/DESIGN.md](docs/DESIGN.md).
+[Design.md](Design.md).
 
 ## License
 
