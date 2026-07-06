@@ -7,6 +7,7 @@ from src.api.dependencies import get_qdrant
 from src.api.models.request import QueryRequest
 from src.api.models.response import QueryResponse, Source
 from src.generation.generator import generate_answer
+from src.generation.prompt import NO_RELEVANT_INFO_MESSAGE
 from src.retrieval.retriever import retrieve
 from src.retrieval.sources import dedupe_sources
 
@@ -23,7 +24,10 @@ def query(body: QueryRequest, qdrant: QdrantClient = Depends(get_qdrant)) -> Que
     try:
         chunks = retrieve(body.question, qdrant, time_window=body.time_window)
         answer = generate_answer(body.question, chunks)
-        sources = _build_sources(chunks)
+        # No sources when the model found nothing relevant — the chunks were
+        # retrieved but the LLM judged them irrelevant, so citing them would
+        # be misleading.
+        sources = [] if answer.strip() == NO_RELEVANT_INFO_MESSAGE else _build_sources(chunks)
         return QueryResponse(answer=answer, sources=sources)
     except Exception as e:
         logger.exception("Query failed for question=%r", body.question)
