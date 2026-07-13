@@ -1,6 +1,6 @@
 services:
   qdrant:
-    image: qdrant/qdrant:v1.9.2
+    image: qdrant/qdrant:v1.12.4
     ports:
       - "6333:6333"   # REST API — your Python client talks here
       - "6334:6334"   # gRPC — not used yet, exposed for completeness

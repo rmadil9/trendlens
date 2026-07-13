@@ -13,7 +13,13 @@ beautifulsoup4==4.12.3
 langchain-text-splitters==0.3.8
 
 # Vector store client
-qdrant-client==1.9.1
+qdrant-client==1.12.2
+
+# Sparse (BM25) embeddings for hybrid search
+fastembed==0.8.0
+
+# Cross-encoder reranking
+sentence-transformers==5.6.0
 
 # OpenAI (embeddings + generation)
 openai==1.30.1
