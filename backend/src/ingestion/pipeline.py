@@ -8,6 +8,7 @@ from src.storage.article_store import Article, get_unembedded_articles, mark_emb
 from src.storage.vector_store import get_client, ensure_collection, upsert_chunks
 from src.ingestion.chunker import chunk_article
 from src.ingestion.embedder import embed_chunks
+from src.ingestion.sparse_embedder import embed_chunks_sparse
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s — %(message)s")
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ def run() -> None:
                 continue
 
             embedded = embed_chunks(chunks)
+            embedded = embed_chunks_sparse(embedded)
             upsert_chunks(qdrant, embedded)
             mark_embedded(conn, article.id)
             total_chunks += len(embedded)

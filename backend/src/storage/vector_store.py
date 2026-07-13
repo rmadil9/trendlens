@@ -3,13 +3,22 @@ import os
 import uuid
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
+from qdrant_client.models import (
+    Distance,
+    VectorParams,
+    SparseVectorParams,
+    SparseVector,
+    PointStruct,
+)
 
 from src.ingestion.embedder import DIMENSIONS
 
 logger = logging.getLogger(__name__)
 
-COLLECTION = os.getenv("QDRANT_COLLECTION", "trendlens")
+# Points at the dense+sparse hybrid collection created by
+# scripts/migrate_hybrid_schema.py — the old dense-only "trendlens"
+# collection is left in place until the migration is verified via eval.
+COLLECTION = os.getenv("QDRANT_COLLECTION", "trendlens_hybrid")
 
 _client: QdrantClient | None = None
 
@@ -33,12 +42,17 @@ def ensure_collection(client: QdrantClient) -> None:
 
     client.create_collection(
         collection_name=COLLECTION,
-        vectors_config=VectorParams(
-            size=DIMENSIONS,      # must match embedding model output exactly (1536)
-            distance=Distance.COSINE,  # angle-based similarity — right for semantic search
-        ),
+        vectors_config={
+            "dense": VectorParams(
+                size=DIMENSIONS,      # must match embedding model output exactly (1536)
+                distance=Distance.COSINE,  # angle-based similarity — right for semantic search
+            ),
+        },
+        sparse_vectors_config={
+            "bm25": SparseVectorParams(),  # keyword-match leg of hybrid search
+        },
     )
-    logger.info("Created collection '%s' (size=%d, distance=COSINE)", COLLECTION, DIMENSIONS)
+    logger.info("Created collection '%s' (dense=%d/COSINE, sparse=bm25)", COLLECTION, DIMENSIONS)
 
 
 def upsert_chunks(client: QdrantClient, chunks: list[dict]) -> None:
@@ -56,7 +70,13 @@ def _to_point(chunk: dict) -> PointStruct:
 
     return PointStruct(
         id=point_id,
-        vector=chunk["embedding"],
+        vector={
+            "dense": chunk["embedding"],
+            "bm25": SparseVector(
+                indices=chunk["sparse_vector"]["indices"],
+                values=chunk["sparse_vector"]["values"],
+            ),
+        },
         payload={                       # everything except the raw vector lives here
             "text": chunk["text"],      # stored so retrieval can return the actual passage
             "source": chunk["source"],
