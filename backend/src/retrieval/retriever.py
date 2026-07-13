@@ -3,14 +3,30 @@ import os
 from datetime import datetime, timezone, timedelta
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, Range
+from qdrant_client.models import (
+    Filter,
+    FieldCondition,
+    Range,
+    Prefetch,
+    FusionQuery,
+    Fusion,
+    SparseVector,
+)
 
 from src.ingestion.embedder import embed_text
+from src.ingestion.sparse_embedder import embed_text_sparse
+from src.retrieval.reranker import rerank
 from src.storage.vector_store import COLLECTION
 
 logger = logging.getLogger(__name__)
 
+# Final number of chunks handed to generation — applied by the reranker,
+# after fusion, not by Qdrant directly.
 K = int(os.getenv("RETRIEVAL_K", "5"))
+
+# How many fused candidates to pull before reranking narrows to K. Wider
+# than K so the reranker has real material to choose between.
+CANDIDATES = int(os.getenv("RETRIEVAL_CANDIDATES", "20"))
 
 # Explicit day counts for each UI time-window chip. Replaces the old
 # keyword-sniffing of the question text (parse_time_window) now that the
@@ -34,23 +50,19 @@ def _cutoff_timestamp(time_window: str) -> int:
 
 def retrieve(question: str, client: QdrantClient, time_window: str = "today", k: int = K) -> list[dict]:
     """
-    Embed the question, then search Qdrant for the K most relevant chunks
-    that were published within the given time window.
+    Hybrid retrieval: embed the question both densely (semantic) and sparsely
+    (BM25 keyword), search both legs inside Qdrant, fuse them server-side
+    with RRF, then rerank the fused candidates and cut to k.
 
-    The filter runs INSIDE Qdrant (not post-filtering in Python).
-    This guarantees we always get up to K results from the correct window —
-    post-filtering could silently return 0 results if all top-K were old.
+    The time filter runs INSIDE each prefetch leg (not post-filtered in
+    Python) — same reasoning as before: guarantees results from the correct
+    window instead of risking 0 if the top candidates were all old.
 
-    Returns a list of chunk dicts (text, title, url, source, published_at, score).
-    Returns [] if no chunks exist in the time window — caller handles this.
+    Returns a list of chunk dicts (text, title, url, source, published_at,
+    score, rerank_score). Returns [] if no chunks exist in the time window.
     """
     cutoff = _cutoff_timestamp(time_window)
 
-    # Embed the question — must use the same model used during ingestion
-    # so the question vector lives in the same 1536-dimensional space
-    query_vector = embed_text(question)
-
-    # The filter narrows the search space BEFORE similarity is computed
     time_filter = Filter(
         must=[
             FieldCondition(
@@ -60,23 +72,44 @@ def retrieve(question: str, client: QdrantClient, time_window: str = "today", k:
         ]
     )
 
-    results = client.search(
+    # Same question, embedded two ways — dense for semantic similarity,
+    # sparse for exact keyword/named-entity matches dense embeddings miss.
+    dense_vector = embed_text(question)
+    sparse_vector = embed_text_sparse(question)
+
+    response = client.query_points(
         collection_name=COLLECTION,
-        query_vector=query_vector,
-        query_filter=time_filter,
-        limit=k,
-        with_payload=True,   # return the payload (text, title, url, etc.) not just the ID
+        prefetch=[
+            Prefetch(
+                query=dense_vector,
+                using="dense",
+                filter=time_filter,
+                limit=CANDIDATES,
+            ),
+            Prefetch(
+                query=SparseVector(
+                    indices=sparse_vector["indices"],
+                    values=sparse_vector["values"],
+                ),
+                using="bm25",
+                filter=time_filter,
+                limit=CANDIDATES,
+            ),
+        ],
+        query=FusionQuery(fusion=Fusion.RRF),
+        limit=CANDIDATES,
+        with_payload=True,
     )
 
-    if not results:
+    if not response.points:
         logger.warning("No chunks found in window=%s for: %r", time_window, question)
         return []
 
     chunks = []
-    for hit in results:
+    for hit in response.points:
         chunk = dict(hit.payload)   # extract text, title, url, source, published_at
-        chunk["score"] = hit.score  # cosine similarity score — useful for debugging
+        chunk["score"] = hit.score  # RRF fusion score — useful for debugging
         chunks.append(chunk)
 
-    logger.info("Retrieved %d chunks (top score: %.3f)", len(chunks), chunks[0]["score"])
-    return chunks
+    logger.info("Fused %d candidates, reranking to top %d", len(chunks), k)
+    return rerank(question, chunks, top_k=k)
