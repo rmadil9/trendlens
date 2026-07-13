@@ -345,6 +345,49 @@ scores:**
 
 ### Iteration log
 
+**2026-07-13 — added hybrid (dense+BM25) search and cross-encoder reranking
+to fix query #7's documented precision failure.** The original eval (below)
+flagged query #7 ("What did Anthropic say about Alibaba's Claude cloning
+attack?") at 1/5 precision — dense-only search let an unrelated Europe
+heat-wave article into the top-5 purely on embedding-similarity term overlap,
+and the model went on to mis-cite an unrelated chunk for a specific claim.
+
+Root cause: pure dense (cosine) retrieval has no mechanism to weight exact
+named-entity/keyword matches — "Alibaba," "Claude," "cloning" all pull in
+same-topic-different-story noise semantically close to the real answer.
+
+Fix: `retrieve()` (`src/retrieval/retriever.py`) now runs dense + BM25
+sparse search as two Qdrant `Prefetch` legs, fused server-side with RRF
+(`FusionQuery(fusion=Fusion.RRF)`, requires Qdrant 1.10+ — bumped
+`docker-compose.yml`/`qdrant-client` from 1.9.2/1.9.1 to 1.12.4/1.12.2), then
+reranks the fused candidates with a local cross-encoder
+(`cross-encoder/ms-marco-MiniLM-L-6-v2`, `src/retrieval/reranker.py`) before
+cutting to the final `RETRIEVAL_K`. New sparse vectors are generated via
+fastembed's `Qdrant/bm25` (`src/ingestion/sparse_embedder.py`); the existing
+collection was backfilled into a new `trendlens_hybrid` collection
+(`scripts/migrate_hybrid_schema.py`, blue-green — old `trendlens` collection
+left untouched) since Qdrant can't add a named vector to an existing
+collection in place.
+
+Verified: re-ran query #7 post-fix — top result is now the exact
+"Anthropic says Alibaba must be punished for largest Claude cloning attack"
+article (rerank score 7.58, next-highest 2.79 — clear separation), #2 is the
+directly-related TechCrunch follow-up, and the generated answer is fully
+grounded with correct citations (no more mis-citation). Query #11 (NVIDIA,
+never in corpus) still correctly refuses rather than hallucinating —
+guardrail unaffected by the retrieval change.
+
+**Caveat, not fixed here:** the eval harness's default `time_window="today"`
+now returns zero chunks for all 15 queries regardless of retrieval quality —
+the corpus's newest article (2026-07-05) is older than "today"'s 1-day
+window relative to the current date. This is a corpus-staleness /
+un-refreshed-cron issue, unrelated to this change, and predates it; the
+verification above used `time_window="month"` to route around it. A full
+rescored 15-query table against the original baseline methodology wasn't
+produced, since doing so meaningfully requires fixing that staleness gap
+first — otherwise the comparison wouldn't be apples-to-apples with the
+2026-07-03 baseline run.
+
 **2026-07-03 — partial-relevance answers were falsely triggering the
 refusal guardrail.** Queries #3 and #15 (both multi-part questions where
 only some retrieved chunks were on-topic) produced a real, well-cited

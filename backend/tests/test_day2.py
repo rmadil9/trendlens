@@ -13,6 +13,7 @@ load_dotenv(dotenv_path=".env")
 from src.storage.article_store import Article
 from src.ingestion.chunker import chunk_article
 from src.ingestion.embedder import embed_chunks, DIMENSIONS
+from src.ingestion.sparse_embedder import embed_chunks_sparse
 from src.storage.vector_store import get_client, ensure_collection, upsert_chunks, COLLECTION
 
 
@@ -115,7 +116,8 @@ class TestVectorStore:
 
     def _embed_article(self, text: str) -> list[dict]:
         chunks = chunk_article(make_article(text))
-        return embed_chunks(chunks)
+        chunks = embed_chunks(chunks)
+        return embed_chunks_sparse(chunks)
 
     def test_collection_exists_after_ensure(self):
         names = [c.name for c in self.qdrant.get_collections().collections]
