@@ -55,10 +55,9 @@ def _process_entry(entry, source: str) -> Article | None:
     else:
         # Fallback: fetch the article page and clean it
         raw_text = _fetch_and_clean(url)
-
-    if not raw_text or is_too_short(raw_text):
-        logger.debug("Skipping short/empty article: %s", url)
-        return None
+        if not raw_text or is_too_short(raw_text):
+            logger.debug("Skipping short/empty article: %s", url)
+            return None
 
     return Article(
         url=url,

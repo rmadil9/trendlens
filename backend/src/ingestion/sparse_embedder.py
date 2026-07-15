@@ -1,11 +1,7 @@
 import logging
-
 from fastembed import SparseTextEmbedding
-
 logger = logging.getLogger(__name__)
-
 MODEL = "Qdrant/bm25"
-
 _model: SparseTextEmbedding | None = None
 
 
