@@ -6,7 +6,6 @@ from openai import (
     APIConnectionError,
     APITimeoutError,
     InternalServerError,
-    RateLimitError,
 )
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
@@ -19,10 +18,11 @@ MODEL = "gpt-4o-mini"
 TEMPERATURE = 0.2   # low = more faithful to context, less creative invention
 MAX_TOKENS = 1024
 
-# Retry only on transient failures (rate limits, timeouts, connection drops,
-# 5xx) — never on 4xx like bad requests or auth errors, which won't succeed
-# on retry.
-_RETRYABLE = (RateLimitError, APITimeoutError, APIConnectionError, InternalServerError)
+# Retry only on transient failures (timeouts, connection drops, 5xx) — not
+# RateLimitError, since rate-limit windows (per-minute quotas) reset on a
+# timescale far longer than our max ~10s backoff would cover, and not 4xx
+# like bad requests or auth errors, which won't succeed on retry either.
+_RETRYABLE = (APITimeoutError, APIConnectionError, InternalServerError)
 
 
 _client: OpenAI | None = None

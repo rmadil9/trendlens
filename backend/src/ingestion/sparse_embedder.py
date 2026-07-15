@@ -40,3 +40,5 @@ def embed_chunks_sparse(chunks: list[dict]) -> list[dict]:
         }
 
     return chunks
+
+
