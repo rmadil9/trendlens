@@ -14,7 +14,8 @@ from src.storage.article_store import Article
 from src.ingestion.chunker import chunk_article
 from src.ingestion.embedder import embed_chunks, DIMENSIONS
 from src.ingestion.sparse_embedder import embed_chunks_sparse
-from src.storage.vector_store import get_client, ensure_collection, upsert_chunks, COLLECTION
+from src.storage.vector_store import get_client, ensure_collection, COLLECTION
+from src.storage.chunk_store import upsert_chunks
 
 
 # ── shared fixture ────────────────────────────────────────────────────────────

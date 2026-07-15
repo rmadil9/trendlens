@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=".env")
 
 from src.ingestion.sparse_embedder import embed_text_sparse, embed_chunks_sparse
-from src.storage.vector_store import _to_point
+from src.storage.chunk_store import _to_point
 from src.retrieval.reranker import rerank
 
 

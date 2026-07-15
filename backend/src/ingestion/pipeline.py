@@ -5,7 +5,8 @@ load_dotenv(dotenv_path=".env")  # must run before any module reads env vars
 
 from src.storage.database import get_connection
 from src.storage.article_store import Article, get_unembedded_articles, mark_embedded
-from src.storage.vector_store import get_client, ensure_collection, upsert_chunks
+from src.storage.vector_store import get_client, ensure_collection
+from src.storage.chunk_store import upsert_chunks
 from src.ingestion.chunker import chunk_article
 from src.ingestion.embedder import embed_chunks
 from src.ingestion.sparse_embedder import embed_chunks_sparse
