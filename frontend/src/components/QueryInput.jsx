@@ -7,8 +7,8 @@ const WINDOWS = [
 ];
 
 const EXAMPLE_QUERIES = [
-  "What's new in AI this week?",
-  "Latest developments in climate tech",
+  "What's new in AI?",
+  "Which startups raised the biggest funding rounds?",
 ];
 
 export default function QueryInput({ onSubmit, loading, timeWindow, onWindowChange }) {

@@ -40,7 +40,7 @@ app = FastAPI(
 # Without this, the browser blocks the request before it even leaves the tab.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite dev server (default port)
+    allow_origins=["*"], 
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
