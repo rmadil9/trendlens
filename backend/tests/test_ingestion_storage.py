@@ -80,6 +80,7 @@ class TestChunker:
 
 # ── embedder tests ────────────────────────────────────────────────────────────
 
+@pytest.mark.integration
 class TestEmbedder:
 
     def test_vector_dimension_is_1536(self):
@@ -108,6 +109,7 @@ class TestEmbedder:
 
 # ── vector store tests ────────────────────────────────────────────────────────
 
+@pytest.mark.integration
 class TestVectorStore:
 
     @pytest.fixture(autouse=True)
