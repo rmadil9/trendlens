@@ -77,6 +77,7 @@ I tested the system against 15 curated queries across 5 categories
 (basic retrieval, time-weighting, specificity, edge cases, answer
 quality). Results:
 
+
 | Metric | Score |
 |---|---|
 | Retrieval Precision@5 (excl. edge cases) | 82% |
