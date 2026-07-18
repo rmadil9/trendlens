@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Cross-encoder weights (test_hybrid.py) are pulled from HuggingFace on
+      # first use — cache them so repeat runs don't re-download every time.
+      - name: Cache HuggingFace model weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: huggingface-cross-encoder-ms-marco-MiniLM-L-6-v2
+
+      # Increment 1: only tests with no external API/service dependency.
+      # TestEmbedder/TestVectorStore (test_day2.py) need OPENAI_API_KEY and a
+      # live Qdrant instance — deliberately excluded until increments 2/3.
+      - name: Run free tests
+        run: pytest tests/test_day2.py::TestChunker tests/test_hybrid.py -v
