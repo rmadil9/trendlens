@@ -66,11 +66,22 @@ ENV PATH="/opt/venv/bin:$PATH" \
 # stdout when it isn't a TTY, so `docker logs` shows nothing until the buffer
 # fills. Debugging a container that appears to log nothing usually ends here.
 
-COPY --from=builder /opt/venv /opt/venv
-COPY --from=builder /opt/models /opt/models
-
 # Non-root: a container escape shouldn't hand over root on the host kernel.
+# Created before the COPYs below so --chown can reference it.
 RUN useradd --create-home --uid 10001 app
+
+# The venv stays root-owned and world-readable. The app needs to execute it,
+# not modify it — a process that cannot rewrite its own dependencies is one
+# fewer way for a compromise to persist.
+COPY --from=builder /opt/venv /opt/venv
+
+# The model cache, by contrast, must be writable. fastembed maintains a tree
+# cache inside its cache directory and updates it at runtime; left root-owned
+# it fails with "Ignoring corrupted tree cache file ... Permission denied" on
+# every query. The weights still load, so this degrades silently rather than
+# crashing — which is exactly why it needs an explicit chown rather than being
+# left to be noticed later.
+COPY --from=builder --chown=app:app /opt/models /opt/models
 
 WORKDIR /app
 

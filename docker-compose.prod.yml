@@ -30,13 +30,11 @@ services:
       - edge
     depends_on:
       - backend
-    # Renewed certificates are new files on disk, and nginx only reads
-    # certificates at startup or reload. Without a periodic reload the site
-    # keeps serving the old certificate until it expires — a failure that
-    # surfaces 90 days after deploy, long after anyone is watching.
-    command: >
-      /bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done &
-                  exec nginx -g 'daemon off;'"
+    # No `command:` override, deliberately. The nginx image's entrypoint runs
+    # its /docker-entrypoint.d/ init scripts only when $1 is exactly "nginx" —
+    # wrapping the command in a shell makes $1 "/bin/sh" and the entire chain,
+    # including envsubst templating, is skipped without any error. The periodic
+    # certificate reload lives in 40-reload-loop.sh instead.
 
   # ── Application ─────────────────────────────────────────────────────────────
   backend:

@@ -39,6 +39,12 @@ FROM nginx:1.27-alpine
 # openssl is needed only by the placeholder-certificate entrypoint below.
 RUN apk add --no-cache openssl
 
+# The stock config defines its own `listen 80; server_name localhost;` server.
+# Left in place it loads alongside ours and, being first alphabetically in
+# conf.d/, becomes the default server for :80 — so any request whose Host
+# doesn't match ${DOMAIN} gets the nginx welcome page instead of the app.
+RUN rm /etc/nginx/conf.d/default.conf
+
 # Static assets. Node, npm, and node_modules stay behind in stage 1 — the
 # runtime image carries only the compiled output.
 COPY --from=build /app/dist /usr/share/nginx/html
