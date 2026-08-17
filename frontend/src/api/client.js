@@ -1,7 +1,13 @@
-const BASE_URL = "http://localhost:8000";
+// Relative, not absolute — and deliberately not a build-time env var.
+//
+// Frontend code runs in the visitor's browser, so the old "http://localhost:8000"
+// meant *their* machine, not the server. Same-origin deployment removes the
+// problem rather than parameterising it: nginx serves this bundle and proxies
+// /api to the backend on the same host, so there is nothing environment-specific
+// left to configure. Vite's dev server proxies the same path (see vite.config.js).
+const BASE_URL = "/api";
 
 // All API calls live here — components call these functions, never fetch() directly.
-// This means if the base URL changes (e.g. prod), you change it in one place.
 
 export async function postQuery(question, timeWindow = "today") {
   const response = await fetch(`${BASE_URL}/query`, {

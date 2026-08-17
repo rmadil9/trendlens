@@ -1,0 +1,26 @@
+# Build context exclusions. Everything here would otherwise be uploaded to the
+# Docker daemon on every build — .venv alone is multiple GB and would make the
+# context transfer dominate build time.
+
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Local corpus, SQLite DB, logs, lockfiles. The production DB lives in a
+# volume; shipping the local one into the image would be both wasteful and
+# actively confusing.
+data/
+
+.pytest_cache/
+tests/
+
+# Secrets never enter an image layer — they arrive at runtime via env_file.
+# An image layer is not a secret store: anyone who can pull the image can read
+# every layer, including files that were deleted in a later layer.
+.env
+.env.*
+!.env.example
+
+*.md

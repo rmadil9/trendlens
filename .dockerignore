@@ -1,0 +1,31 @@
+# Build context for nginx/Dockerfile, whose context is the repo root.
+# Without these exclusions every build uploads node_modules, the local corpus,
+# and the Python venv to the Docker daemon before doing any work.
+
+.git/
+.github/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/*.local
+
+# Backend — not part of the nginx image at all; it has its own context and its
+# own .dockerignore.
+backend/
+
+# Docs, loop scaffolding, editor state
+docs/
+*.md
+!frontend/README.md
+.claude/
+.vscode/
+.idea/
+.DS_Store
+
+# Secrets never enter a build context. Anything here can end up in a layer, and
+# layers are readable by anyone who can pull the image.
+.env
+.env.*
+!.env.example

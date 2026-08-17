@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -36,11 +37,30 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS: allow the React dev server to call this API.
-# Without this, the browser blocks the request before it even leaves the tab.
+# CORS — defence in depth, not the primary control.
+#
+# In production the frontend is served from the same origin as this API (nginx
+# serves the bundle and proxies /api on trendlens.adil9.tech), so requests are
+# same-origin and the browser never runs a CORS check at all. This exists for
+# the local split-origin dev case, and so a future split-origin deployment
+# fails closed rather than open.
+#
+# Worth being precise about what the previous allow_origins=["*"] did and did
+# not do: CORS is enforced by browsers, not by servers. It never stopped curl or
+# a script — those were always able to reach this API. What "*" did allow was
+# any website on the internet building a frontend against this backend, funding
+# their traffic with this project's OpenAI key. Direct scripted abuse is the
+# rate limiter's job (nginx, limit_req); this handles browser-origin abuse.
+# The two controls are complementary, not redundant.
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )

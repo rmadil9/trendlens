@@ -1,0 +1,119 @@
+# Production stack for trendlens.adil9.tech
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# The root docker-compose.yml stays as-is for local development, where Qdrant
+# publishes its ports so host-run uvicorn can reach it. Nothing here publishes
+# anything except nginx — see the network split below.
+
+services:
+
+  # ── Web tier: TLS, static files, reverse proxy, rate limiting ───────────────
+  nginx:
+    build:
+      context: .                    # repo root — needs frontend/ and nginx/
+      dockerfile: nginx/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      # Restricts envsubst to variables starting with DOMAIN. Without this the
+      # entrypoint substitutes every defined env var, and any that collides
+      # with an nginx variable name silently empties it in the rendered config.
+      NGINX_ENVSUBST_FILTER: "DOMAIN"
+    volumes:
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    networks:
+      - edge
+    depends_on:
+      - backend
+    # Renewed certificates are new files on disk, and nginx only reads
+    # certificates at startup or reload. Without a periodic reload the site
+    # keeps serving the old certificate until it expires — a failure that
+    # surfaces 90 days after deploy, long after anyone is watching.
+    command: >
+      /bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done &
+                  exec nginx -g 'daemon off;'"
+
+  # ── Application ─────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env              # OPENAI_API_KEY — never baked into a layer
+    environment:
+      QDRANT_HOST: qdrant           # Docker DNS resolves service names
+      QDRANT_PORT: "6333"
+      QDRANT_COLLECTION: trendlens_hybrid
+      SQLITE_PATH: /app/data/trendlens.db
+    volumes:
+      - backend_data:/app/data      # SQLite + ingestion logs
+    networks:
+      - edge                        # reachable by nginx
+      - internal                    # can reach qdrant
+    depends_on:
+      - qdrant
+    # No `ports:`. The backend is reachable only through nginx. This is the
+    # difference between a rate limit that can be enforced and one that can be
+    # bypassed by hitting :8000 directly.
+    #
+    # Single worker, deliberately. The cross-encoder loads ~500MB resident per
+    # process, and the rerank is synchronous CPU work — a second worker doubles
+    # memory to contend for the same cores. Scale by adding replicas behind
+    # nginx if load ever justifies it, not by adding workers here.
+
+  # ── Vector store ────────────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    restart: unless-stopped
+    environment:
+      # The internal network has no route out, so telemetry can only fail and
+      # fill the log with connection errors. Turn it off rather than let it
+      # retry forever.
+      QDRANT__TELEMETRY_DISABLED: "true"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - internal                    # NOT on edge — nginx cannot reach it
+    # No published ports. Qdrant has no authentication by default; publishing
+    # 6333 on a VPS puts an open, unauthenticated vector database on the public
+    # internet. The local dev compose publishes it because host-run uvicorn
+    # needs it — in here, nothing outside the internal network should.
+
+  # ── Certificate lifecycle ───────────────────────────────────────────────────
+  certbot:
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    networks:
+      - edge                        # needs outbound HTTPS to Let's Encrypt;
+                                    # `internal` has no route out
+    # `certbot renew` is a no-op until a certificate is inside 30 days of
+    # expiry, so running it twice daily is free and means a transient failure
+    # gets ~60 retries before anything actually expires.
+    entrypoint: >
+      /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot;
+                  sleep 12h & wait $${!}; done"
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+# Two networks rather than one, so reachability is structural rather than
+# conventional. nginx sits on `edge` only, qdrant on `internal` only, and
+# backend bridges them. A compromised nginx has no route to the vector store —
+# not because a rule forbids it, but because no network path exists.
+networks:
+  edge:
+  internal:
+    internal: true                  # no route out to the internet either
+
+volumes:
+  qdrant_data:
+  backend_data:
+  certbot_certs:
+  certbot_www:

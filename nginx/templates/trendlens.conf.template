@@ -1,0 +1,133 @@
+# Rendered by the official image's envsubst entrypoint into
+# /etc/nginx/conf.d/trendlens.conf. Only ${DOMAIN} is substituted — the compose
+# file sets NGINX_ENVSUBST_FILTER=DOMAIN so nginx's own $host / $uri /
+# $binary_remote_addr survive untouched.
+
+# ── Rate limiting ─────────────────────────────────────────────────────────────
+# Two zones because the two kinds of traffic have completely different cost
+# profiles. Serving a cached JS bundle is microseconds; /query is an OpenAI
+# embedding call, a CPU-bound cross-encoder rerank, and a GPT-4o-mini
+# completion — roughly $0.0008 and several seconds of a worker.
+#
+# $binary_remote_addr over $remote_addr: 4 bytes per IPv4 entry instead of ~15,
+# so a 10m zone tracks ~160k addresses rather than ~44k.
+
+limit_req_zone $binary_remote_addr zone=static_limit:10m rate=30r/s;
+limit_req_zone $binary_remote_addr zone=query_limit:10m  rate=20r/m;
+
+# 429 rather than nginx's default 503. 503 means "server is overloaded, this is
+# our fault"; 429 means "you exceeded a limit" — the accurate signal, and the
+# one clients and crawlers know how to back off from.
+limit_req_status 429;
+
+
+# ── :80 — ACME challenge and redirect ─────────────────────────────────────────
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+
+    # Must stay on plain HTTP and must not redirect: this is the path Let's
+    # Encrypt fetches to verify domain control, and it validates before any
+    # certificate exists.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+
+# ── :443 — the application ────────────────────────────────────────────────────
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    # Written at container start by 15-ensure-certificate.sh — points at the
+    # real Let's Encrypt cert when one exists, a self-signed placeholder when
+    # it doesn't.
+    include /etc/nginx/ssl-certificate.conf;
+
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # HSTS is deliberately commented out. Once a browser sees this header it
+    # refuses plain HTTP to this domain for max-age — so shipping it before TLS
+    # is confirmed working can lock you out of your own subdomain. Enable after
+    # the real certificate is verified.
+    # add_header Strict-Transport-Security "max-age=31536000" always;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    # A natural-language question is a few hundred bytes. This caps the request
+    # body far below anything legitimate, so oversized payloads are rejected by
+    # nginx before a Python worker is ever allocated.
+    client_max_body_size 16k;
+
+    gzip on;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # ── API ───────────────────────────────────────────────────────────────────
+    # Trailing slash on proxy_pass strips the /api/ prefix: a request for
+    # /api/query reaches the backend as /query, which is what the FastAPI
+    # router actually registers. Drop that slash and the backend sees
+    # /api/query and returns 404 — a genuinely common way to lose an hour.
+    location /api/ {
+        limit_req zone=query_limit burst=10 nodelay;
+
+        proxy_pass http://backend:8000/;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # /query does an embedding call, a rerank, and an LLM completion in
+        # series. The 60s default read timeout is uncomfortably close to a slow
+        # generation; 120s leaves headroom without hanging forever.
+        proxy_connect_timeout 10s;
+        proxy_send_timeout    120s;
+        proxy_read_timeout    120s;
+
+        proxy_buffering off;
+    }
+
+    # ── Static assets ─────────────────────────────────────────────────────────
+    # Vite fingerprints these filenames with a content hash, so a changed file
+    # is a changed URL. That makes an immutable year-long cache safe — the
+    # browser never needs to revalidate.
+    location /assets/ {
+        limit_req zone=static_limit burst=60 nodelay;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # ── SPA ───────────────────────────────────────────────────────────────────
+    location / {
+        limit_req zone=static_limit burst=60 nodelay;
+
+        # index.html is the one file that must never be cached: it carries the
+        # <script> tags naming the current hashed bundles. Cache it and users
+        # keep loading the previous deploy's assets after every release.
+        add_header Cache-Control "no-cache";
+
+        # Client-side routing: a deep link like /about is not a file on disk,
+        # so unmatched paths fall through to index.html and React resolves the
+        # route.
+        try_files $uri $uri/ /index.html;
+    }
+}
