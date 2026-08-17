@@ -1,5 +1,7 @@
 # TrendLens
 
+**Live: [trendlens.adil9.tech](https://trendlens.adil9.tech)**
+
 A time-weighted RAG system that ingests tech news from multiple RSS sources
 and answers questions like *"What's new in AI this week?"* with synthesized,
 source-cited answers grounded in recent articles — not a link dump, and not
@@ -34,8 +36,11 @@ is prioritized, not just similar content.
 ```
 backend/    FastAPI service — ingestion, retrieval, generation, eval harness
 frontend/   React (Vite) UI — query box, answer panel, citations
+nginx/      Production web tier — TLS, static serving, /api proxy, rate limiting
+deploy/     Production cron scripts and crontab
 docs/       Learning journal and design notes
-docker-compose.yml   Qdrant (the only containerized service today)
+docker-compose.yml        Local dev — Qdrant only
+docker-compose.prod.yml   Production — nginx, backend, qdrant, certbot
 ```
 
 Each side has its own README with setup details:
@@ -68,7 +73,40 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173 and ask a question.
+Open http://localhost:5173 and ask a question. Vite proxies `/api` to the
+backend on :8000, mirroring what nginx does in production — so the client
+code carries no environment branch.
+
+## Deployment
+
+Live at [trendlens.adil9.tech](https://trendlens.adil9.tech) on a single
+VPS. Four containers, only nginx publishing ports:
+
+| Service | Role | Exposure |
+|---|---|---|
+| nginx | TLS, static files, `/api` proxy, rate limiting | 80/443 |
+| backend | FastAPI + uvicorn | internal only |
+| qdrant | vector store | internal network only |
+| certbot | Let's Encrypt renewal loop | — |
+
+```bash
+cp .env.example .env               # set DOMAIN and CERTBOT_EMAIL
+cp backend/.env.example backend/.env   # set OPENAI_API_KEY
+docker compose -f docker-compose.prod.yml up -d --build
+
+# one-time certificate (--entrypoint certbot bypasses the renewal loop)
+docker compose -f docker-compose.prod.yml run --rm --entrypoint certbot certbot \
+  certonly --webroot -w /var/www/certbot -d "$DOMAIN" \
+  --email "$CERTBOT_EMAIL" --agree-tos --no-eff-email
+docker compose -f docker-compose.prod.yml restart nginx
+
+crontab deploy/crontab.example     # hourly ingest :00, embed :05
+```
+
+The frontend is served from the same origin as the API, so there's no CORS
+to configure and no `BASE_URL` env var. Design rationale — including the
+network segmentation and three deployment bugs that passed every
+validation check — is in [backend/Design.md](backend/Design.md#9-deployment).
 
 ## Tech Stack
 
@@ -85,10 +123,11 @@ Open http://localhost:5173 and ask a question.
 ## Status
 
 Core pipeline (ingestion → hybrid retrieval → reranking → generation → API →
-UI) is built and hand-evaluated (15 curated queries, see
-[backend/readme.md](backend/readme.md#evaluation) for scores). Still open:
-event-driven ingestion, scheduled digests, CI/CD, and a production Docker
-build for the backend/frontend — see the Design Document for the full list.
+UI) is built, hand-evaluated (15 curated queries, see
+[backend/readme.md](backend/readme.md#evaluation) for scores), covered by CI,
+and deployed. Still open: event-driven ingestion, scheduled digests,
+deploy-on-merge, backups, and cost caps on the public API — see the
+[Design Document](backend/Design.md) for the full list.
 
 ## License
 

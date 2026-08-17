@@ -28,8 +28,12 @@ and who cares whether an answer is actually grounded, not just fluent.
 **Out of scope, and why:**
 - User auth / multi-tenancy — single-user portfolio demo, no access
   control need
-- Hybrid (dense+sparse) retrieval — dense-only is sufficient for tech-news
-  vocabulary; deferred to section 11
+- ~~Hybrid (dense+sparse) retrieval — dense-only is sufficient for tech-news
+  vocabulary; deferred to section 11~~ — **this call was wrong.** The eval
+  (query #7) showed dense-only had no mechanism to weight exact named-entity
+  matches. Hybrid + reranking shipped 2026-07-13; see the Iteration log in
+  section 6. Left struck through rather than deleted because the reasoning
+  that produced the wrong call is the useful part.
 - Paywalled / non-RSS sources — RSS is free, structured, and reliable
   enough; scraping paywalls adds fragility for little corpus value
 - Real-time/streaming ingestion — hourly cron is good enough for a news
@@ -76,7 +80,11 @@ iteration, polish.
 | `generation/prompt.py` | Builds system/user prompt from chunks + question |
 | `generation/generator.py` | Calls GPT-4o-mini with retry, returns the answer string |
 | `api/main.py`, `routes/`, `models/`, `dependencies.py` | FastAPI HTTP layer, DI for the Qdrant client |
-| `frontend/` | React UI — query box, answer panel, citation list |
+| `retrieval/reranker.py` | Cross-encoder rerank of the fused candidate set |
+| `ingestion/sparse_embedder.py` | BM25 sparse vectors via fastembed, for the hybrid search's keyword leg |
+| `frontend/` | React UI — query box, answer panel, citation list. Built into the nginx image; not a runtime service |
+| `nginx/` | Production web tier — TLS, static serving, `/api` proxy, rate limiting, security headers |
+| `deploy/cron/` | Production cron wrappers — `flock` on the host, work inside the backend container |
 | `eval/` | Offline evaluation harness (separate from the running app) |
 
 **Data flow — ingestion path:**
@@ -88,11 +96,13 @@ all `is_embedded=0` rows → chunk → embed (OpenAI) → upsert into Qdrant →
 flip `is_embedded=1`.
 
 **Data flow — query path:**
-User question (React UI or CLI) → `POST /query` → `parse_time_window()`
-resolves a date cutoff from the question text → `embed_text()` → Qdrant
-search filtered to that cutoff, top-K=5 → `build_prompt()` assembles
-system + user messages → GPT-4o-mini → `dedupe_sources()` → JSON
-`{answer, sources}` → rendered in React.
+User question + selected time window (React UI or CLI) → nginx `/api/query`
+→ `POST /query` → `_cutoff_timestamp()` resolves the window to a Unix
+cutoff → `embed_text()` (dense) and `embed_text_sparse()` (BM25) → two
+Qdrant `Prefetch` legs, each filtered to that cutoff, fused server-side
+with RRF → `rerank()` cuts the fused candidates to `RETRIEVAL_K=5` →
+`build_prompt()` assembles system + user messages → GPT-4o-mini →
+`dedupe_sources()` → JSON `{answer, sources}` → rendered in React.
 
 **Failure boundaries:**
 
@@ -127,11 +137,10 @@ fillable by reading the repo, needs to actually be drawn.
 **Deferred components, and why:** RabbitMQ (cron is simpler and sufficient
 at this volume — event-driven ingestion only pays off once feed volume or
 latency requirements justify the operational overhead of a broker);
-hybrid/sparse retrieval and reranking (dense-only has been sufficient per
-the eval — see section 6 — revisit if named-entity precision, e.g. query
-#7, stays weak after more targeted fixes); query rewriting (adds latency
-and another LLM call for a problem that a better prompt or a rerank step
-might solve more cheaply first).
+query rewriting (adds latency and another LLM call for a problem that a
+better prompt or a rerank step might solve more cheaply first — and the
+rerank step, added 2026-07-13, did solve it). Hybrid/sparse retrieval and
+reranking were listed here as deferred until 2026-07-13 and are no longer.
 
 ## 4. Data Strategy
 
@@ -212,14 +221,27 @@ retrieval-latency concern (see section 11).
 
 ## 5. Retrieval and Generation
 
-**Retrieval approach:** Dense-only vector search (cosine similarity over
-`text-embedding-3-small` vectors). No sparse/keyword component and no
-similarity threshold — `retrieve()` always returns the top-K nearest
-chunks even if the best match is a poor one (this is deliberate for the
-eval's edge cases — see query #11/#12 in section 6 — but it's a real
-tradeoff: an unrelated top-5 always gets handed to the LLM, and the
-refusal guardrail is the *only* thing standing between that and a
-hallucinated answer).
+**Retrieval approach:** Hybrid. `retrieve()` issues two Qdrant `Prefetch`
+legs — dense (cosine over `text-embedding-3-small`) and sparse (BM25 via
+fastembed's `Qdrant/bm25`) — fused server-side with RRF
+(`FusionQuery(fusion=Fusion.RRF)`), then reranks the fused candidates with
+a local cross-encoder (`ms-marco-MiniLM-L-6-v2`) and cuts to
+`RETRIEVAL_K`. `RETRIEVAL_CANDIDATES=20` controls how wide the fused
+candidate pool is before reranking — deliberately wider than K so the
+reranker has real material to choose between.
+
+*(This section described dense-only retrieval until 2026-08-17. Hybrid
+search shipped 2026-07-13 — commit `f3f05ad`, see the Iteration log in
+section 6 — and this section was not updated at the time. Noting the drift
+rather than quietly overwriting it: a design doc that silently diverges
+from the code is worse than one that admits when it did.)*
+
+Still no similarity threshold — `retrieve()` returns the top-K reranked
+chunks even when the best match is poor (deliberate for the eval's edge
+cases, see query #11/#12 in section 6). The tradeoff is unchanged: an
+unrelated top-5 still gets handed to the LLM, and the refusal guardrail is
+the only thing between that and a hallucinated answer. What changed is how
+often that situation arises, not what happens when it does.
 
 **Embedding model:** `text-embedding-3-small` (OpenAI API) over a local
 model like `all-MiniLM-L6-v2` — chose retrieval quality over the
@@ -228,15 +250,24 @@ negligible (see section 7). `DIMENSIONS=1536` is isolated in
 `embedder.py` and consumed once by `vector_store.py`'s collection config,
 so swapping models later is a two-file change.
 
-**Time-weighted retrieval mechanics:** `parse_time_window()` scans the
-question text for keyword phrases ("this week" → 7 days, "this/past/last
-month" → 30 days, "today"/"recent" → 1 day, else → `DEFAULT_WINDOW_DAYS`
-env var, default 30) and converts that to a Unix cutoff. The cutoff is
-applied as a Qdrant `Range` filter **inside** the search call, not as a
-post-filter in Python — this guarantees up to K results from the correct
-window instead of risking 0 results if the naive top-K-then-filter order
-happened to be all-old. Known gap: no "last year"/absolute-date branch —
-falls back to the 30-day default silently (see query #10 in section 6).
+**Time-weighted retrieval mechanics:** The time window now arrives as an
+explicit parameter from the UI's segmented control (`today` / `week` /
+`month`), mapped to day counts by `WINDOW_DAYS` in `retriever.py`. This
+replaced `parse_time_window()`, which sniffed time phrases out of the
+question text. The reason for the change: keeping both meant a stray "this
+week" inside a question could silently override the chip the user actually
+selected — two sources of truth for one decision.
+
+The cutoff is applied as a Qdrant `Range` filter **inside** each prefetch
+leg, not as a post-filter in Python — this guarantees up to K results from
+the correct window instead of risking 0 if the naive top-K-then-filter
+order happened to be all-old.
+
+*Consequence of the change worth stating:* the old "last year" gap
+(query #10 in section 6) is no longer a silent parsing failure — it is now
+simply unrepresentable, because the UI offers no such window. That is a
+narrower product surface, not a fix. Queries about older news have no way
+to ask for it at all.
 
 **Prompt template:** Two-part system/user split (see `prompt.py`):
 1. **System prompt** — role framing, "use ONLY the provided articles, no
@@ -263,15 +294,26 @@ gap, found during this eval pass: the refusal instruction originally had
 no notion of *partial* relevance, causing a dual-mode "partial answer +
 refusal" bug — fixed, see Iteration log.
 
-**Configuration parameters:** `RETRIEVAL_K=5`, `TEMPERATURE=0.2`,
-`MAX_TOKENS=1024`, `DEFAULT_WINDOW_DAYS=30` — all environment-overridable
-except temperature/max_tokens, which are hardcoded constants in
-`generator.py` rather than env vars (inconsistent with the others, minor).
+**Configuration parameters:** `RETRIEVAL_K=5`, `RETRIEVAL_CANDIDATES=20`,
+`RERANK_MODEL`, `TEMPERATURE=0.2`, `MAX_TOKENS=1024` — all
+environment-overridable except temperature/max_tokens, which are hardcoded
+constants in `generator.py` rather than env vars (inconsistent with the
+others, minor). `MAX_QUESTION_LENGTH=1000` caps question length in
+`api/models/request.py` (see section 7).
 
-**What's deferred:** hybrid (dense+sparse) retrieval, reranking, query
-rewriting — see section 3's "Deferred components" for the reasoning.
+**What's deferred:** query rewriting — see section 3's "Deferred
+components". Hybrid retrieval and reranking are no longer deferred; both
+shipped 2026-07-13.
 
 ## 6. Evaluation
+
+> **Reading note:** this section is a historical record of the July 2026 eval
+> passes, kept as written at the time. It refers to `parse_time_window()` and
+> to dense-only retrieval — both of which the code has since moved past (see
+> sections 3 and 5). Those references are accurate descriptions of what was
+> being evaluated then, not of the current system. The scores below have not
+> been re-run against the current hybrid architecture; doing so is tracked in
+> `STATE.md`.
 
 **What's measured:** Precision@5 (of the 5 retrieved chunks, how many are
 actually on-topic), time-filter correctness (does the retrieved date range
@@ -438,16 +480,47 @@ per-request errors return a clean 500 instead of leaking a traceback.
   not a hard one. Real, currently-accepted risk for an MVP pulling from a
   fixed, reputable set of 6 feeds; would need real mitigation before
   ingesting arbitrary/user-submitted sources.
-- *Input validation* — `QueryRequest.not_empty` rejects blank questions,
-  but there's no length cap and no rate limiting on `/query`. A large
-  question increases prompt-embedding cost proportionally; repeated
-  requests have no throttle. Combined with no auth (below), this means
-  anyone with network access to the API can spend the owner's OpenAI
-  budget with no limit beyond `MAX_TOKENS` per individual call.
-- *No authentication* on `/query` — acceptable for a local/portfolio demo,
-  a real gap before any public deployment.
-- *CORS* — locked to `http://localhost:5173` (the Vite dev server) in
-  `main.py`; will need updating for any deployed frontend origin.
+- *Input validation* — `QueryRequest` rejects blank questions and caps
+  length at `MAX_QUESTION_LENGTH=1000`; nginx independently caps the
+  request body at 16k. The cap is a correctness fix as much as a cost one:
+  `text-embedding-3-small` rejects inputs over 8191 tokens and
+  `embedder.py` has no handler for that error, so an oversized question
+  previously became an unhandled 500 rather than a clear rejection.
+- *Rate limiting* — enforced at nginx via `limit_req`, two zones: 30r/s
+  for static assets, 20r/m (burst 10) for `/api`. Deliberately at the edge
+  rather than in the app: `/query` runs a synchronous CPU-bound
+  cross-encoder rerank inside an async handler, so it blocks the event
+  loop for its duration. Rejecting a flood before a Python worker is
+  allocated protects availability, not just spend. The backend publishes
+  no ports, so this cannot be bypassed by hitting `:8000` directly.
+- *No authentication* on `/query` — still true, and still the largest
+  accepted risk now that the service is public. The rate limit bounds
+  abuse; it does not prevent it. Anyone who finds the URL can spend the
+  owner's OpenAI budget at 20 requests/minute.
+- *CORS* — `ALLOWED_ORIGINS` env var, set to `https://trendlens.adil9.tech`
+  in production, defaulting to `http://localhost:5173`.
+  **Correction:** this section previously claimed CORS was locked to
+  `localhost:5173`. It was not — `main.py` had `allow_origins=["*"]` until
+  2026-08-17. Worth stating plainly because the doc asserted a control that
+  did not exist.
+
+  Also worth being precise about what CORS does: it is enforced by
+  browsers, not servers. `"*"` never made the API reachable by anyone who
+  couldn't already reach it with `curl`. What it did allow was any website
+  building a frontend against this backend and funding its traffic with
+  this project's OpenAI key. Direct scripted abuse is the rate limiter's
+  job. The two controls are complementary, not redundant — and since the
+  production deployment is same-origin (section 9), the browser never runs
+  a CORS check at all. It is defence in depth against a future
+  split-origin deployment failing open.
+- *Security headers* — HSTS (1 year, no `preload`, no `includeSubDomains`),
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: strict-origin-when-cross-origin`, set at nginx. See
+  section 9 for the inheritance bug that made these silently absent on the
+  HTML document while present on the JSON API.
+- *Prompt injection* — unchanged, still not defended against. Now a
+  slightly larger risk than when the service was local-only, since the
+  attack surface includes anyone who can get text into one of the 6 feeds.
 
 **Cost breakdown — estimate, not a billing-dashboard figure** (I don't
 have access to your OpenAI usage dashboard; this is computed from known
@@ -513,14 +586,25 @@ answers, not Qdrant/httpx request noise). No log aggregation or structured
 logging (JSON logs) — plain text to stdout/files, redirected by the cron
 scripts into `data/logs/`.
 
-**Testing strategy:** `tests/test_day2.py` covers chunker, embedder, and
-vector-store behavior (chunk sizing, idempotent upsert, metadata
-completeness) — solid unit coverage for the ingestion pipeline.
-**Real gap:** there is no test coverage for retrieval (`retriever.py`,
-including `parse_time_window()`'s keyword matching), generation
-(`prompt.py`, `generator.py`), or the API routes. The eval harness
-(section 6) is the only thing currently exercising that code path, and
-it's a manual, not automated/CI, check.
+**Testing strategy:** 56 unit tests across 7 files, split from the original
+single `test_day2.py` — article store (in-memory SQLite), cleaner, fetcher
+(mocked HTTP), ingestion+storage (chunk boundaries, embedder payloads,
+Qdrant ops), retrieval components (BM25 sparse logic, point construction,
+cross-encoder sort order), retriever (time-window boundary arithmetic), and
+source dedup. Tests needing live Qdrant/OpenAI are marked
+`@pytest.mark.integration` and excluded from CI, which runs
+`pytest -m "not integration"`. See `tests/README.md`.
+
+**Real gap:** still no coverage for generation (`prompt.py`,
+`generator.py`) or the API routes — no FastAPI `TestClient` tests for
+`/query` or `/health`. The eval harness (section 6) is the only thing
+exercising the generation path, and it's a manual check.
+
+**What the tests did not catch:** every one of the three deployment bugs in
+section 9. Unit tests assert on functions; those failures lived in the
+container image, the nginx config, and the interaction between them. That's
+an argument for a smoke test against a running stack as a distinct layer,
+not for more unit tests.
 
 **Dependency management:** `requirements.txt` with pinned exact versions,
 installed into a project-local `.venv`. No lockfile-based tool (Poetry,
@@ -535,29 +619,119 @@ src.api.main:app --reload` for the backend, `npm run dev` for the Vite
 frontend. This is the actual path exercised to run the eval in this
 session.
 
-**Docker architecture — mostly not built yet.** `docker-compose.yml`
-currently defines a **single service: Qdrant.** There are no Dockerfiles
-for the backend or frontend anywhere in the repo, and `docker-compose.yml`
-has no `profiles:` key at all. This means the command in `readme.md`'s
-Quick Start —  `docker compose --profile production up --build` — **will
-not run as written.** This is the single biggest gap between what the
-README promises and what exists; it's the natural next concrete task
-before calling deployment "done."
+**Production deployment — live at `https://trendlens.adil9.tech`** since
+2026-08-17, on an 8GB/100GB VPS. `docker-compose.prod.yml` defines four
+services; `docker-compose.yml` stays as the local-dev file, where Qdrant
+publishes its ports so host-run `uvicorn` can reach it.
 
-**CI/CD approach:** none. No `.github/workflows/` directory exists — no
-automated test run, lint, or eval-on-PR. Section 11 already lists
-"automated eval in CI/CD" as a scale-time goal; this section is the
-current-state confirmation that it hasn't started yet.
+| Service | Role | Exposure |
+|---|---|---|
+| `nginx` | TLS, static files, `/api` proxy, rate limiting | **only** service publishing ports (80/443) |
+| `backend` | FastAPI + uvicorn, single worker | internal networks only |
+| `qdrant` | vector store | `internal` network only |
+| `certbot` | webroot renewal loop, 12h interval | shares cert volume with nginx |
 
-**Demo strategy:** `readme.md` references `docs/demo.gif` and
-`docs/architecture-diagram.png` — **neither file exists in `docs/`
-yet** (only `docs/learning.md` is there). Both are still todo.
+**Same-origin, deliberately.** nginx serves the React bundle at `/` and
+proxies `/api/*` to the backend on the same host and port. The alternative
+— frontend on `trendlens.adil9.tech`, API on `api.trendlens.adil9.tech` —
+was rejected because it makes CORS mandatory and load-bearing (misconfigure
+it and the app breaks), adds a preflight round-trip per POST, and requires
+a build-time `BASE_URL` env var and therefore one image per environment.
+Same-origin deletes all three problems rather than managing them:
+`client.js` calls the relative path `/api`, and Vite's dev server proxies
+the same path so dev and prod behave identically. The cost is coupling the
+frontend and backend to one domain — reversible later with a DNS record and
+a CORS policy, so it is not a one-way door.
 
-**Observability:** logging only (section 8) — no metrics, tracing, or
-alerting. `/health` exists (`api/routes/health.py`) but only returns a
-static `{"status": "ok"}` — it doesn't check Qdrant connectivity or SQLite
-reachability, so it can report healthy while a dependency is actually
-down.
+**The frontend is a build artifact, not a service.** There is no frontend
+container. `nginx/Dockerfile` is a multi-stage build: stage 1 runs
+`npm run build`, stage 2 copies `dist/` into the nginx image. The SPA does
+no per-request computation — `npm run build` emits immutable files — so
+running a process to serve them would add supervision, a health check, a
+restart policy, and a network hop for no capability gained. (The intuition
+that it *is* a service comes from `npm run dev`, which is a long-running
+process — but that's a build tool doing hot-reload, and it must never run
+in production. If this moved to Next.js with SSR, the frontend would
+genuinely become a service and this decision would flip.)
+
+**Network segmentation is structural, not conventional.** Two Docker
+networks: `edge` (nginx ↔ backend ↔ certbot) and `internal`
+(backend ↔ qdrant, declared `internal: true` so it has no route out).
+Backend bridges them; nginx has no path to Qdrant at all. This matters
+because Qdrant ships with no authentication — publishing 6333 on a public
+VPS would put an open vector database on the internet. A compromised nginx
+cannot reach it, not because a rule forbids it, but because no network path
+exists.
+
+**Model weights are baked at build time.** `reranker.py` and
+`sparse_embedder.py` both lazily download from HuggingFace on first use.
+Left to runtime that means a stall on the first query after every deploy
+*and* a hard dependency on HuggingFace being reachable for the app to serve
+at all. The builder stage downloads both, so it's a cost paid once. Backend
+image is 2.37GB (torch dominates); nginx is 83.5MB.
+
+**TLS.** Let's Encrypt via certbot's webroot plugin. The bootstrap deadlock
+— nginx won't start without a certificate, certbot can't get one without
+nginx serving `:80` — is resolved by `15-ensure-certificate.sh`, which
+writes an include file pointing at a self-signed placeholder when no real
+certificate exists, and at the real one when it does. Renewal is a 12h
+`certbot renew` loop plus a 6h `nginx -s reload` (nginx only reads
+certificates at start or reload; without the reload the site would serve an
+expired cert ~90 days after deploy, long after anyone is watching).
+
+**Three silent failures found during deployment.** All three passed
+`nginx -t` and the unit tests. All three were caught only by asserting on
+actual responses:
+
+1. *The compose `command:` override disabled the nginx entrypoint.* The
+   nginx image runs its `/docker-entrypoint.d/` scripts only when `$1` is
+   literally `nginx`. Wrapping the command in a shell made `$1` `/bin/sh`,
+   so envsubst never templated the config and the cert script never ran —
+   silently, with no error. Fixed by moving the reload loop into
+   `40-reload-loop.sh` and leaving `command` alone.
+2. *Baked model weights were root-owned.* The builder runs as root, the
+   runtime as uid 10001, so fastembed couldn't write its tree cache. It
+   degraded rather than crashed — the weights still loaded — which is
+   exactly why it would have gone unnoticed.
+3. *`add_header` inheritance dropped every security header on the HTML
+   page.* In nginx, a block that declares any `add_header` discards all
+   inherited ones. `location /` set `Cache-Control`, silently dropping
+   HSTS, `X-Frame-Options`, `X-Content-Type-Options`, and `Referrer-Policy`
+   — while `/api/` (which sets no header) kept them. Headers were present
+   on the JSON API and absent on the document: the exact inverse of what
+   matters. Fixed by factoring them into
+   `nginx/snippets/security-headers.conf` and re-including per location.
+
+**CI/CD approach:** GitHub Actions (`.github/workflows/ci.yml`), two jobs —
+backend unit tests (`pytest -m "not integration"`, with the cross-encoder
+weights cached) and frontend lint + build. Integration tests requiring live
+Qdrant/OpenAI stay local-only. Deployment itself is still manual
+(`git pull && docker compose -f docker-compose.prod.yml up -d --build`) —
+no deploy-on-merge.
+
+**Scheduling in production:** host crontab as the `adil` user, hourly ingest
+at `:00` and embed at `:05`, via `deploy/cron/`. The scripts `docker compose
+exec -T` into the running backend; `-T` matters because cron has no TTY and
+`exec` fails outright without it. `flock` stays on the host rather than in
+the container — the lock's job is to stop overlapping cron firings, so it
+belongs on the same side as the thing it guards.
+
+**Demo strategy:** `docs/demo.gif` and `docs/architecture-diagram.png` are
+still referenced and still missing. The live URL now partly covers what the
+demo GIF was for.
+
+**Observability:** logging only — no metrics, tracing, or alerting.
+`/health` now checks Qdrant *and* the specific collection, returning 503
+when degraded (it previously returned a static `{"status": "ok"}` and could
+report healthy through a total outage — a health check that cannot fail
+carries no information). Checking the collection rather than just the
+connection is deliberate: Qdrant being reachable is not the same as Qdrant
+holding the collection this app queries.
+
+**Known deployment gaps:** no deploy-on-merge; no log rotation on
+`logs/*.log`; no backup of the Qdrant volume or SQLite DB; no uptime
+monitoring, so a container that stops restarting would go unnoticed until
+someone visited the site.
 
 ## 10. Decisions Log
 
@@ -571,20 +745,33 @@ A running table of every significant decision:
 | Chunking | Recursive, 500 tokens | Fixed-size, semantic | Respects text structure, predictable size |
 | Message broker | RabbitMQ | Redis Streams, Kafka | Reliable delivery, DLQ support, right-sized |
 | Frontend | React | Vanilla HTML+HTMX, Streamlit | Polished UX for portfolio demo |
-| Retrieval | Dense only | Hybrid (dense+sparse) | Sufficient for tech news vocabulary, hybrid deferred |
+| Retrieval | Hybrid dense+BM25, RRF, cross-encoder rerank | Dense only | Dense alone let same-topic-wrong-story noise into top-5 on named-entity queries (eval query #7) |
 | Data retention | Keep everything | TTL-based cleanup | Storage is cheap, enables historical queries |
-| Deployment | Manual → GitHub Actions | CI/CD from start | Ship MVP faster, automate once stable |
+| Time window | Explicit UI parameter | Parsing phrases from question text | Two sources of truth let a stray "this week" override the user's actual selection |
+| Reverse proxy | nginx | Caddy | Caddy automates TLS in ~10 lines; nginx chosen deliberately for the learning value of owning certbot |
+| Origin strategy | Same-origin (`/api` path) | Split-origin (`api.` subdomain) | Deletes CORS and the BASE_URL env var entirely rather than configuring them |
+| Frontend packaging | Build artifact compiled into the nginx image | Its own container | SPA does no per-request work; a process to serve static files buys nothing |
+| Containerization | All 4 services in Docker | nginx+certbot on host, app in Docker | Repo is the deployment; reproducible on any box |
+| Rate limiting | nginx `limit_req` | App-level (slowapi) | Rejects before a worker is allocated; the rerank blocks the event loop |
+| Network topology | Two networks, qdrant internal-only | One network | Qdrant has no auth — reachability should be structural, not conventional |
+| Deployment | Manual → GitHub Actions | CI/CD from start | Ship MVP faster, automate once stable. CI shipped 2026-07-18; deploy still manual |
 
 ## 11. What I'd Do Differently at Scale
 
-- Hybrid retrieval for vocabulary coverage
+Done since this list was written: hybrid retrieval (2026-07-13), CI
+(2026-07-18), rate limiting (2026-08-17).
+
 - Qdrant clustering for availability
 - Kubernetes for multi-node deployment
-- Log aggregation (ELK or CloudWatch)
+- Log aggregation (ELK or CloudWatch) — currently plain files with no rotation
 - Automated eval in CI/CD pipeline
 - LLM-as-judge for continuous quality monitoring
-- Cost alerting and budget caps on OpenAI
-- Rate limiting and user authentication
+- Cost alerting and budget caps on OpenAI — the largest remaining gap now
+  that the API is public and unauthenticated
+- User authentication
+- Deploy-on-merge rather than manual `git pull` on the server
+- Backups for the Qdrant volume and SQLite DB — neither is backed up today
+- Uptime monitoring — nothing would notice if the stack stopped serving
 
 ## 12. What I Learned
 
@@ -617,6 +804,23 @@ A running table of every significant decision:
   the `is_embedded` flag as a work queue) makes cron-based retry safe by
   construction — a failed run doesn't need special recovery logic, it
   just re-runs.
+- **Config that validates is not config that works.** The three
+  deployment bugs in section 9 all passed `nginx -t` and the full unit
+  suite. Each was a *semantic* failure — an entrypoint that skipped its
+  init chain, a cache directory the runtime user couldn't write, a header
+  set that got silently replaced instead of extended. The only thing that
+  caught any of them was asserting on real responses from a running stack.
+  Validation checks that a config is well-formed; it cannot check that it
+  means what you intended.
+- **Silent degradation is worse than a crash, and it's the default.** All
+  three bugs failed in the quiet direction: nginx served *a* page, the
+  reranker still loaded its weights, the API still returned its headers.
+  A crash would have been found in seconds. Systems that fail soft need
+  assertions precisely because they won't tell you.
+- **Deleting a problem beats configuring it.** Same-origin deployment
+  removed the CORS question and the `BASE_URL`-per-environment question
+  outright, rather than answering each correctly. The cheapest bug is the
+  one the architecture makes unrepresentable.
 
 **What surprised me (per the Day 2-3 notes):** that embeddings are a
 one-way transformation — the LLM never sees the vector, only the payload

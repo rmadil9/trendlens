@@ -61,15 +61,19 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000 and ask a question.
+Open http://localhost:5173 and ask a question.
 
-### Run with Docker (production-like)
-> **Not wired up yet.** `docker-compose.yml` currently only defines the
-> Qdrant service — there's no backend/frontend Dockerfile and no
-> `production` profile. This command is aspirational until that's built.
+### Run the production stack
+Four containers — nginx (TLS + static + `/api` proxy), backend, qdrant,
+certbot. Only nginx publishes ports.
 ```bash
-docker compose --profile production up --build
+cp .env.example .env                    # DOMAIN, CERTBOT_EMAIL
+cp backend/.env.example backend/.env    # OPENAI_API_KEY
+docker compose -f docker-compose.prod.yml up -d --build
 ```
+Certificate bootstrap and crontab install are in the
+[root README](../README.md#deployment). Full architecture and rationale in
+[Design.md](Design.md#9-deployment).
 
 ## Evaluation
 
@@ -102,10 +106,12 @@ detailed scoring.
 | Component | Choice | Why |
 |---|---|---|
 | Embedding | text-embedding-3-small (OpenAI) | Higher retrieval quality, parameterized for swap to local model |
-| Vector Store | Qdrant | Native metadata filtering for time-weighted retrieval |
+| Vector Store | Qdrant (dense + BM25 sparse, RRF fusion) | Native metadata filtering plus hybrid search for named-entity precision |
+| Reranking | Cross-encoder (`ms-marco-MiniLM-L-6-v2`, local) | Cleans up fused candidates before generation |
 | Generation | GPT-4o-mini (OpenAI) | Cost-effective, strong instruction following |
 | Backend | FastAPI (Python) | Async, auto-docs, Python-native |
-| Frontend | React | Polished interactive UI |
+| Frontend | React + Vite | Polished interactive UI |
+| Web tier | nginx | TLS, static serving, `/api` proxy, edge rate limiting |
 | Message Broker | RabbitMQ (post-MVP) | Reliable delivery with dead-letter support |
 | Database | SQLite | Article deduplication and ingestion tracking |
 
@@ -119,11 +125,16 @@ detailed scoring.
 - [x] API endpoints
 - [x] Web UI
 - [x] Evaluation (hand-scored, 15 queries — see above)
+- [x] Hybrid retrieval (dense + BM25, RRF) with cross-encoder reranking
+- [x] CI (GitHub Actions — backend tests, frontend lint + build)
+- [x] Production Docker build — 4-container stack, live at
+      [trendlens.adil9.tech](https://trendlens.adil9.tech)
 - [ ] Event-driven ingestion (RabbitMQ) — still cron-based
 - [ ] Scheduled digests
 - [ ] UI polish
-- [ ] CI/CD (GitHub Actions)
-- [ ] Production Docker build (only Qdrant is containerized today)
+- [ ] Deploy-on-merge (deployment is still a manual `git pull` on the VPS)
+- [ ] Backups for the Qdrant volume and SQLite DB
+- [ ] Cost caps / budget alerts on the public API
 - [ ] Demo GIF / architecture diagram
 
 ## Design Document
