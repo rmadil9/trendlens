@@ -54,6 +54,11 @@ COPY --from=build /app/dist /usr/share/nginx/html
 # reaches the config without baking the hostname into the image.
 COPY nginx/templates/ /etc/nginx/templates/
 
+# Not under templates/ — anything there is envsubst'd into conf.d/ and loaded
+# as a standalone config, and a bare list of add_header directives outside a
+# server block is a syntax error.
+COPY nginx/snippets/ /etc/nginx/snippets/
+
 # Scripts in /docker-entrypoint.d/ run before nginx starts, in filename order.
 COPY nginx/docker-entrypoint.d/ /docker-entrypoint.d/
 RUN chmod +x /docker-entrypoint.d/*.sh
