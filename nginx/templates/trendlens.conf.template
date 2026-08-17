@@ -58,11 +58,17 @@ server {
     ssl_session_timeout 1d;
     ssl_session_tickets off;
 
-    # HSTS is deliberately commented out. Once a browser sees this header it
-    # refuses plain HTTP to this domain for max-age — so shipping it before TLS
-    # is confirmed working can lock you out of your own subdomain. Enable after
-    # the real certificate is verified.
-    # add_header Strict-Transport-Security "max-age=31536000" always;
+    # Enabled once the Let's Encrypt certificate was verified working
+    # (2026-08-17). Order matters: a browser that has seen this header refuses
+    # plain HTTP to this domain for max-age, so turning it on before TLS is
+    # confirmed can lock you out of your own subdomain with no way to serve the
+    # fix. It also closes the redirect window — without it, the first request
+    # of a session still travels over :80 before being redirected.
+    #
+    # No `preload`, and no includeSubDomains: preload is a one-way door
+    # (removal from the browser-baked list takes months) and includeSubDomains
+    # would commit every other adil9.tech subdomain to HTTPS, not just this one.
+    add_header Strict-Transport-Security "max-age=31536000" always;
 
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options DENY always;
