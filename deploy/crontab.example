@@ -1,5 +1,9 @@
 # TrendLens production crontab — install with:  crontab deploy/crontab.example
-# (edit the paths first if the repo doesn't live at /home/deploy/trendlens)
+# (edit the paths first if the repo doesn't live at /home/adil/trendlens)
+#
+# Install as the `adil` user, not root. The scripts call `docker compose`, which
+# relies on adil's docker group membership; a root crontab would also create the
+# log files as root, so the next adil-owned run could not append to them.
 #
 # Cron runs with a near-empty environment and a PATH that usually excludes
 # /usr/local/bin, which is where the docker CLI lives on most installs. Setting
@@ -10,8 +14,8 @@ SHELL=/bin/bash
 
 # Ingest at the top of the hour, embed five minutes later. The gap lets
 # ingestion finish writing before the embed job reads the work queue.
-0 * * * * /home/deploy/trendlens/deploy/cron/ingest.sh
-5 * * * * /home/deploy/trendlens/deploy/cron/embed.sh
+0 * * * * /home/adil/trendlens/deploy/cron/ingest.sh
+5 * * * * /home/adil/trendlens/deploy/cron/embed.sh
 
 # Both scripts hold a flock, so a slow run is skipped rather than stacked.
 # Both append to <repo>/logs/. Add logrotate if those grow — nothing prunes
