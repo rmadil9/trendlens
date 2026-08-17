@@ -49,6 +49,11 @@ services:
       QDRANT_PORT: "6333"
       QDRANT_COLLECTION: trendlens_hybrid
       SQLITE_PATH: /app/data/trendlens.db
+      # Same-origin means the browser never runs a CORS check in production,
+      # so this is defence in depth rather than the control anything relies on.
+      # Left at its localhost default it would fail open the day the frontend
+      # is ever served from somewhere else.
+      ALLOWED_ORIGINS: https://${DOMAIN}
     volumes:
       - backend_data:/app/data      # SQLite + ingestion logs
     networks:
